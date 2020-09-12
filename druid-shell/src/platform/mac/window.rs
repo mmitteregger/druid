@@ -1,4 +1,4 @@
-// Copyright 2019 The xi-editor Authors.
+// Copyright 2019 The Druid Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -24,8 +24,7 @@ use std::time::Instant;
 
 use cocoa::appkit::{
     CGFloat, NSApp, NSApplication, NSAutoresizingMaskOptions, NSBackingStoreBuffered, NSEvent,
-    NSEventModifierFlags, NSView, NSViewHeightSizable, NSViewWidthSizable, NSWindow,
-    NSWindowStyleMask,
+    NSView, NSViewHeightSizable, NSViewWidthSizable, NSWindow, NSWindowStyleMask,
 };
 use cocoa::base::{id, nil, BOOL, NO, YES};
 use cocoa::foundation::{
@@ -41,21 +40,26 @@ use objc::runtime::{Class, Object, Sel};
 use objc::{class, msg_send, sel, sel_impl};
 
 use crate::kurbo::{Point, Rect, Size, Vec2};
-use crate::piet::{Piet, RenderContext};
+use crate::piet::{Piet, PietText, RenderContext};
 
-use super::appkit::{NSTrackingArea, NSTrackingAreaOptions, NSView as NSViewExt};
+use super::appkit::{
+    NSRunLoopCommonModes, NSTrackingArea, NSTrackingAreaOptions, NSView as NSViewExt,
+};
 use super::application::Application;
 use super::dialog;
+use super::keyboard::{make_modifiers, KeyboardState};
 use super::menu::Menu;
 use super::util::{assert_main_thread, make_nsstring};
 use crate::common_util::IdleCallback;
 use crate::dialog::{FileDialogOptions, FileDialogType, FileInfo};
-use crate::keyboard::{KeyEvent, KeyModifiers};
-use crate::keycodes::KeyCode;
+use crate::keyboard_types::KeyState;
 use crate::mouse::{Cursor, MouseButton, MouseButtons, MouseEvent};
+use crate::region::Region;
 use crate::scale::Scale;
-use crate::window::{IdleToken, Text, TimerToken, WinHandler};
+use crate::window::{IdleToken, TimerToken, WinHandler};
+use crate::window;
 use crate::Error;
+
 
 #[allow(non_upper_case_globals)]
 const NSWindowDidBecomeKeyNotification: &str = "NSWindowDidBecomeKeyNotification";
@@ -105,11 +109,12 @@ struct ViewState {
     nsview: WeakPtr,
     handler: Box<dyn WinHandler>,
     idle_queue: Arc<Mutex<Vec<IdleKind>>>,
-    last_mods: KeyModifiers,
     /// Tracks window focusing left clicks
     focus_click: bool,
     // Tracks whether we have already received the mouseExited event
     mouse_left: bool,
+    keyboard_state: KeyboardState,
+    text: PietText,
 }
 
 impl WindowBuilder {
@@ -144,6 +149,14 @@ impl WindowBuilder {
     pub fn show_titlebar(&mut self, show_titlebar: bool) {
         // TODO: Use this in `self.build`
         self.show_titlebar = show_titlebar;
+    }
+
+    pub fn set_position(&mut self, _position: Point) {
+        log::warn!("WindowBuilder::set_position is currently unimplemented for mac platforms.");
+    }
+
+    pub fn set_window_state(&self, _state: window::WindowState) {
+        log::warn!("WindowBuilder::set_window_state is currently unimplemented for mac platforms.");
     }
 
     pub fn set_title(&mut self, title: impl Into<String>) {
@@ -333,6 +346,7 @@ lazy_static! {
             draw_rect as extern "C" fn(&mut Object, Sel, NSRect),
         );
         decl.add_method(sel!(runIdle), run_idle as extern "C" fn(&mut Object, Sel));
+        decl.add_method(sel!(viewWillDraw), view_will_draw as extern "C" fn(&mut Object, Sel));
         decl.add_method(sel!(redraw), redraw as extern "C" fn(&mut Object, Sel));
         decl.add_method(
             sel!(handleTimer:),
@@ -360,13 +374,15 @@ fn make_view(handler: Box<dyn WinHandler>) -> (id, Weak<Mutex<Vec<IdleKind>>>) {
     unsafe {
         let view: id = msg_send![VIEW_CLASS.0, new];
         let nsview = WeakPtr::new(view);
+        let keyboard_state = KeyboardState::new();
         let state = ViewState {
             nsview,
             handler,
             idle_queue,
-            last_mods: KeyModifiers::default(),
             focus_click: false,
             mouse_left: true,
+            keyboard_state,
+            text: PietText::new_with_unique_state(),
         };
         let state_ptr = Box::into_raw(Box::new(state));
         (*view).set_ivar("viewState", state_ptr as *mut c_void);
@@ -589,24 +605,23 @@ extern "C" fn pinch_event(this: &mut Object, _: Sel, nsevent: id) {
 }
 
 extern "C" fn key_down(this: &mut Object, _: Sel, nsevent: id) {
-    let event = make_key_event(nsevent);
-
     let view_state = unsafe {
         let view_state: *mut c_void = *this.get_ivar("viewState");
         &mut *(view_state as *mut ViewState)
     };
-    (*view_state).handler.key_down(event);
-    view_state.last_mods = event.mods;
+    if let Some(event) = (*view_state).keyboard_state.process_native_event(nsevent) {
+        (*view_state).handler.key_down(event);
+    }
 }
 
 extern "C" fn key_up(this: &mut Object, _: Sel, nsevent: id) {
-    let event = make_key_event(nsevent);
     let view_state = unsafe {
         let view_state: *mut c_void = *this.get_ivar("viewState");
         &mut *(view_state as *mut ViewState)
     };
-    (*view_state).handler.key_up(event);
-    view_state.last_mods = event.mods;
+    if let Some(event) = (*view_state).keyboard_state.process_native_event(nsevent) {
+        (*view_state).handler.key_up(event);
+    }
 }
 
 extern "C" fn mods_changed(this: &mut Object, _: Sel, nsevent: id) {
@@ -614,12 +629,20 @@ extern "C" fn mods_changed(this: &mut Object, _: Sel, nsevent: id) {
         let view_state: *mut c_void = *this.get_ivar("viewState");
         &mut *(view_state as *mut ViewState)
     };
-    let (down, event) = mods_changed_key_event(view_state.last_mods, nsevent);
-    view_state.last_mods = event.mods;
-    if down {
-        (*view_state).handler.key_down(event);
-    } else {
-        (*view_state).handler.key_up(event);
+    if let Some(event) = (*view_state).keyboard_state.process_native_event(nsevent) {
+        if event.state == KeyState::Down {
+            (*view_state).handler.key_down(event);
+        } else {
+            (*view_state).handler.key_up(event);
+        }
+    }
+}
+
+extern "C" fn view_will_draw(this: &mut Object, _: Sel) {
+    unsafe {
+        let view_state: *mut c_void = *this.get_ivar("viewState");
+        let view_state = &mut *(view_state as *mut ViewState);
+        (*view_state).handler.prepare_paint();
     }
 }
 
@@ -632,22 +655,21 @@ extern "C" fn draw_rect(this: &mut Object, _: Sel, dirtyRect: NSRect) {
             msg_send![context, CGContext];
         let cgcontext_ref = CGContextRef::from_ptr_mut(cgcontext_ptr);
 
+        // FIXME: use the actual invalid region instead of just this bounding box.
+        // https://developer.apple.com/documentation/appkit/nsview/1483772-getrectsbeingdrawn?language=objc
         let rect = Rect::from_origin_size(
             (dirtyRect.origin.x, dirtyRect.origin.y),
             (dirtyRect.size.width, dirtyRect.size.height),
         );
-        let mut piet_ctx = Piet::new_y_down(cgcontext_ref);
+        let invalid = Region::from(rect);
+
         let view_state: *mut c_void = *this.get_ivar("viewState");
         let view_state = &mut *(view_state as *mut ViewState);
-        let anim = (*view_state).handler.paint(&mut piet_ctx, rect);
+        let mut piet_ctx = Piet::new_y_down(cgcontext_ref, Some(view_state.text.clone()));
+
+        (*view_state).handler.paint(&mut piet_ctx, &invalid);
         if let Err(e) = piet_ctx.finish() {
             error!("{}", e)
-        }
-
-        if anim {
-            // TODO: synchronize with screen refresh rate using CVDisplayLink instead.
-            let () = msg_send!(this as *const _, performSelectorOnMainThread: sel!(redraw)
-                withObject: nil waitUntilDone: NO);
         }
 
         let superclass = msg_send![this, superclass];
@@ -759,6 +781,14 @@ impl WindowHandle {
         }
     }
 
+    pub fn request_anim_frame(&self) {
+        unsafe {
+            // TODO: synchronize with screen refresh rate using CVDisplayLink instead.
+            let () = msg_send![*self.nsview.load(), performSelectorOnMainThread: sel!(redraw)
+                withObject: nil waitUntilDone: NO];
+        }
+    }
+
     // Request invalidation of the entire window contents.
     pub fn invalidate(&self) {
         unsafe {
@@ -804,13 +834,24 @@ impl WindowHandle {
             let user_info: id = msg_send![nsnumber, numberWithUnsignedInteger: token.into_raw()];
             let selector = sel!(handleTimer:);
             let view = self.nsview.load();
-            let _: id = msg_send![nstimer, scheduledTimerWithTimeInterval: ti target: view selector: selector userInfo: user_info repeats: NO];
+            let timer: id = msg_send![nstimer, timerWithTimeInterval: ti target: view selector: selector userInfo: user_info repeats: NO];
+            let runloop: id = msg_send![class!(NSRunLoop), currentRunLoop];
+            let () = msg_send![runloop, addTimer: timer forMode: NSRunLoopCommonModes];
         }
         token
     }
 
-    pub fn text(&self) -> Text {
-        Text::new()
+    pub fn text(&self) -> PietText {
+        let view = self.nsview.load();
+        unsafe {
+            if let Some(view) = (*view).as_ref() {
+                let state: *mut c_void = *view.get_ivar("viewState");
+                (*(state as *mut ViewState)).text.clone()
+            } else {
+                // this codepath should only happen during tests in druid, when view is nil
+                PietText::new_with_unique_state()
+            }
+        }
     }
 
     pub fn open_file_sync(&mut self, options: FileDialogOptions) -> Option<FileInfo> {
@@ -834,6 +875,37 @@ impl WindowHandle {
 
     // TODO: Implement this
     pub fn show_titlebar(&self, _show_titlebar: bool) {}
+
+    pub fn set_position(&self, _position: Point) {
+        log::warn!("WindowHandle::set_position is currently unimplemented for Mac.");
+    }
+
+    pub fn get_position(&self) -> Point {
+        log::warn!("WindowHandle::get_position is currently unimplemented for Mac.");
+        Point::new(0.0, 0.0)
+    }
+
+    pub fn set_size(&self, _size: Size) {
+        log::warn!("WindowHandle::set_size is currently unimplemented for Mac.");
+    }
+
+    pub fn get_size(&self) -> Size {
+        log::warn!("WindowHandle::get_size is currently unimplemented for Mac.");
+        Size::new(0.0, 0.0)
+    }
+
+    pub fn set_window_state(&self, _state: window::WindowState) {
+        log::warn!("WindowHandle::set_window_state is currently unimplemented for Mac.");
+    }
+
+    pub fn get_window_state(&self) -> window::WindowState {
+        log::warn!("WindowHandle::get_window_state is currently unimplemented for Mac.");
+        window::WindowState::RESTORED
+    }
+
+    pub fn handle_titlebar(&self, _val: bool) {
+        log::warn!("WindowHandle::handle_titlebar is currently unimplemented for Mac.");
+    }
 
     pub fn resizable(&self, resizable: bool) {
         unsafe {
@@ -880,7 +952,7 @@ impl WindowHandle {
     /// Get the `Scale` of the window.
     pub fn get_scale(&self) -> Result<Scale, Error> {
         // TODO: Get actual Scale
-        Ok(Scale::from_dpi(96.0, 96.0))
+        Ok(Scale::new(1.0, 1.0))
     }
 }
 
@@ -940,54 +1012,5 @@ fn time_interval_from_deadline(deadline: std::time::Instant) -> f64 {
         let secs = t.as_secs() as f64;
         let subsecs = f64::from(t.subsec_micros()) * 0.000_001;
         secs + subsecs
-    }
-}
-
-fn make_key_event(event: id) -> KeyEvent {
-    unsafe {
-        let chars = event.characters();
-        let slice = std::slice::from_raw_parts(chars.UTF8String() as *const _, chars.len());
-        let text = std::str::from_utf8_unchecked(slice);
-
-        let unmodified_chars = event.charactersIgnoringModifiers();
-        let slice = std::slice::from_raw_parts(
-            unmodified_chars.UTF8String() as *const _,
-            unmodified_chars.len(),
-        );
-        let unmodified_text = std::str::from_utf8_unchecked(slice);
-
-        let virtual_key = event.keyCode();
-        let is_repeat: bool = msg_send!(event, isARepeat);
-        let modifiers = event.modifierFlags();
-        let modifiers = make_modifiers(modifiers);
-        KeyEvent::new(virtual_key, is_repeat, modifiers, text, unmodified_text)
-    }
-}
-
-fn mods_changed_key_event(prev: KeyModifiers, event: id) -> (bool, KeyEvent) {
-    unsafe {
-        let key_code: KeyCode = event.keyCode().into();
-        let is_repeat = false;
-        let modifiers = event.modifierFlags();
-        let modifiers = make_modifiers(modifiers);
-
-        let down = match key_code {
-            KeyCode::LeftShift | KeyCode::RightShift if prev.shift => false,
-            KeyCode::LeftAlt | KeyCode::RightAlt if prev.alt => false,
-            KeyCode::LeftControl | KeyCode::RightControl if prev.ctrl => false,
-            KeyCode::LeftMeta | KeyCode::RightMeta if prev.meta => false,
-            _ => true,
-        };
-        let event = KeyEvent::new(key_code, is_repeat, modifiers, "", "");
-        (down, event)
-    }
-}
-
-fn make_modifiers(raw: NSEventModifierFlags) -> KeyModifiers {
-    KeyModifiers {
-        shift: raw.contains(NSEventModifierFlags::NSShiftKeyMask),
-        alt: raw.contains(NSEventModifierFlags::NSAlternateKeyMask),
-        ctrl: raw.contains(NSEventModifierFlags::NSControlKeyMask),
-        meta: raw.contains(NSEventModifierFlags::NSCommandKeyMask),
     }
 }

@@ -21,6 +21,13 @@ struct DialogOption<T> {
     action: Box<dyn Fn(&mut EventCtx, &mut T, &Env)>,
 }
 
+/// Describes a dialog widget.
+///
+/// A dialog widget is a special form of a modal widget
+/// that can display a text with some option buttons.
+///
+/// Only the dialog widget will receive user input events.
+/// The dialog needs to be closed by any of the option buttons to continue.
 pub struct DialogDesc<T> {
     text: LabelText<T>,
     options: Vec<DialogOption<T>>,
@@ -28,6 +35,26 @@ pub struct DialogDesc<T> {
 }
 
 impl<T: Data> DialogDesc<T> {
+    /// Construct a new `DialogDesc` with the given text.
+    ///
+    /// ```
+    /// use druid::{DialogDesc, EventCtx, Env};
+    ///
+    /// // Construct a new dialog using static string.
+    /// let _: DialogDesc<()> = DialogDesc::new("Hello world");
+    ///
+    /// // Construct a new dialog including option buttons.
+    /// let _: DialogDesc<()> = DialogDesc::new("Save data?")
+    ///         .with_option("Yes", |_ctx: &mut EventCtx, _data: &mut (), _env: &Env| {
+    ///             unimplemented!("Save data");
+    ///         })
+    ///         .with_option("No", |_ctx: &mut EventCtx, _data: &mut (), _env: &Env| {
+    ///             unimplemented!("Don't save data");
+    ///         })
+    ///         .with_option("Cancel", |_ctx: &mut EventCtx, _data: &mut (), _env: &Env| {
+    ///             unimplemented!("Abort quitting");
+    ///         });
+    /// ```
     pub fn new(text: impl Into<LabelText<T>>) -> DialogDesc<T> {
         DialogDesc {
             text: text.into(),
@@ -36,6 +63,7 @@ impl<T: Data> DialogDesc<T> {
         }
     }
 
+    /// Adds a button with the given label text and on-click action to the dialog.
     pub fn with_option(
         mut self,
         text: impl Into<LabelText<T>>,
@@ -48,11 +76,13 @@ impl<T: Data> DialogDesc<T> {
         self
     }
 
+    /// Specifies the background that should be used for the dialog.
     pub fn background(mut self, brush: impl Into<BackgroundBrush<T>>) -> Self {
         self.background = Some(brush.into());
         self
     }
 
+    /// Transforms this dialog description into a widget to be used in a `ModalDesc`.
     fn into_widget(self) -> impl Widget<T> {
         let mut button_row = Flex::row();
         for opt in self.options {
@@ -60,7 +90,7 @@ impl<T: Data> DialogDesc<T> {
             let action = opt.action;
             button_row.add_child(Button::new(opt.text).on_click(move |ctx, data, env| {
                 action(ctx, data, env);
-                ctx.submit_command(ModalDesc::DISMISS_MODAL, ctx.window_id());
+                ctx.submit_command(ModalDesc::DISMISS_MODAL.to(ctx.window_id()));
             }));
         }
         let label = Label::new(self.text);
@@ -71,6 +101,7 @@ impl<T: Data> DialogDesc<T> {
         )
     }
 
+    /// Transforms this dialog description into a `ModalDesc`.
     pub fn into_modal_desc(self) -> ModalDesc<T> {
         ModalDesc::new(self.into_widget())
     }

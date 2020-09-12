@@ -14,7 +14,7 @@
 
 use druid::widget::{Button, Controller, Flex, Label, TextBox};
 use druid::{
-    AppLauncher, Color, Data, DialogDesc, Env, Event, EventCtx, KeyCode, Lens, ModalDesc, Widget,
+    AppLauncher, Color, Data, DialogDesc, Env, Event, EventCtx, KbKey, Lens, ModalDesc, Widget,
     WidgetExt, WindowDesc,
 };
 
@@ -53,20 +53,28 @@ impl<W: Widget<String>> Controller<String, W> for NumberEntryController {
         env: &Env,
     ) {
         if let Event::KeyDown(ev) = event {
-            match ev.key_code {
-                KeyCode::Key0
-                | KeyCode::Key1
-                | KeyCode::Key2
-                | KeyCode::Key3
-                | KeyCode::Key4
-                | KeyCode::Key5
-                | KeyCode::Key6
-                | KeyCode::Key7
-                | KeyCode::Key8
-                | KeyCode::Key9
-                | KeyCode::Backspace => child.event(ctx, event, data, env),
-                _ => ctx.show_modal(make_modal()),
+            match &ev.key {
+                KbKey::Backspace => {
+                    child.event(ctx, event, data, env);
+                    return;
+                }
+                KbKey::Character(character) => {
+                    let mut chars_iter = character.chars();
+                    let (char1, char2) = (chars_iter.next(), chars_iter.next());
+                    match (char1, char2) {
+                        (Some(char1), None) => {
+                            if char1.is_numeric() {
+                                child.event(ctx, event, data, env);
+                                return;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
             }
+
+            ctx.show_modal(make_modal());
         } else {
             child.event(ctx, event, data, env);
         }

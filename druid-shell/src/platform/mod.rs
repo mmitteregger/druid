@@ -1,4 +1,4 @@
-// Copyright 2019 The xi-editor Authors.
+// Copyright 2019 The Druid Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,12 +21,15 @@ cfg_if::cfg_if! {
     } else if #[cfg(target_os = "macos")] {
         mod mac;
         pub use mac::*;
+        pub(crate) mod shared;
     } else if #[cfg(all(feature = "x11", target_os = "linux"))] {
         mod x11;
         pub use x11::*;
+        pub(crate) mod shared;
     } else if #[cfg(target_os = "linux")] {
         mod gtk;
         pub use self::gtk::*;
+        pub(crate) mod shared;
     } else if #[cfg(target_arch = "wasm32")] {
         mod web;
         pub use web::*;
