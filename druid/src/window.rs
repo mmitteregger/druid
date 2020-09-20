@@ -334,6 +334,8 @@ impl<T: Data> Window<T> {
         let mut update_ctx = UpdateCtx {
             widget_state: &mut widget_state,
             state: &mut state,
+            prev_env: None,
+            env,
         };
 
         for modal in self.modals.iter_mut().rev() {
@@ -364,6 +366,18 @@ impl<T: Data> Window<T> {
             }
             self.invalid.clear();
         }
+    }
+
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub(crate) fn invalid(&self) -> &Region {
+        &self.invalid
+    }
+
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub(crate) fn invalid_mut(&mut self) -> &mut Region {
+        &mut self.invalid
     }
 
     /// Get ready for painting, by doing layout and sending an `AnimFrame` event.

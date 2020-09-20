@@ -22,7 +22,7 @@ You can find its changes [documented below](#060---2020-06-01).
 - `ScrollComponent` for ease of adding consistent, customized, scrolling behavior to a widget. ([#1107] by [@ForLoveOfCats])
 - Selection text color to textbox. ([#1093] by [@sysint64])
 - `BoxConstraints::UNBOUNDED` constant. ([#1126] by [@danieldulaney])
-- Close requests from the shell can now be intercepted ([#1118] by [@jneem], [#1204] by [@psychon])
+- Close requests from the shell can now be intercepted ([#1118] by [@jneem], [#1204] by [@psychon], [#1238] by [@tay64])
 - The Lens derive now supports an `ignore` attribute. ([#1133] by [@jneem])
 - `request_update` in `EventCtx`. ([#1128] by [@raphlinus])
 - `ExtEventSink`s can now be obtained from widget methods. ([#1152] by [@jneem])
@@ -35,6 +35,11 @@ You can find its changes [documented below](#060---2020-06-01).
 - Implementation of `Data` trait for `i128` and `u128` primitive data types. ([#1214] by [@koutoftimer])
 - `LineBreaking` enum allows configuration of label line-breaking ([#1195] by [@cmyr])
 - `TextAlignment` support in `TextLayout` and `Label` ([#1210] by [@cmyr])`
+- `UpdateCtx` gets `env_changed` and `env_key_changed` methods ([#1207] by [@cmyr])
+- `Button::from_label` to construct a `Button` with a provided `Label`. ([#1226] by [@ForLoveOfCats])
+- Lens: Added Unit lens for type erased / display only widgets that do not need data. ([#1232] by [@rjwittams])
+- `WindowLevel` to control system window Z order, with Mac and GTK implementations  ([#1231] by [@rjwittams])
+- WIDGET_PADDING items added to theme and `Flex::with_default_spacer`/`Flex::add_default_spacer` ([#1220] by [@cmyr])
 
 ### Changed
 
@@ -302,6 +307,7 @@ Last release without a changelog :(
 [@rjwittams]: https://github.com/rjwittams
 [@rhzk]: https://github.com/rhzk
 [@koutoftimer]: https://github.com/koutoftimer
+[@tay64]: https://github.com/tay64
 
 [#599]: https://github.com/linebender/druid/pull/599
 [#611]: https://github.com/linebender/druid/pull/611
@@ -445,8 +451,14 @@ Last release without a changelog :(
 [#1195]: https://github.com/linebender/druid/pull/1195
 [#1204]: https://github.com/linebender/druid/pull/1204
 [#1205]: https://github.com/linebender/druid/pull/1205
+[#1207]: https://github.com/linebender/druid/pull/1207
 [#1210]: https://github.com/linebender/druid/pull/1210
 [#1214]: https://github.com/linebender/druid/pull/1214
+[#1226]: https://github.com/linebender/druid/pull/1226
+[#1232]: https://github.com/linebender/druid/pull/1232
+[#1231]: https://github.com/linebender/druid/pull/1231
+[#1220]: https://github.com/linebender/druid/pull/1220
+[#1238]: https://github.com/linebender/druid/pull/1238
 
 [Unreleased]: https://github.com/linebender/druid/compare/v0.6.0...master
 [0.6.0]: https://github.com/linebender/druid/compare/v0.5.0...v0.6.0

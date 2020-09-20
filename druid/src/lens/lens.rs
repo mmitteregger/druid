@@ -279,7 +279,7 @@ where
         let lens = &self.lens;
         lens.with(old_data, |old_data| {
             lens.with(data, |data| {
-                if ctx.has_requested_update() || !old_data.same(data) {
+                if ctx.has_requested_update() || !old_data.same(data) || ctx.env_changed() {
                     inner.update(ctx, old_data, data, env);
                 }
             })
@@ -573,5 +573,31 @@ where
             self.inner.with_mut(Arc::make_mut(data), |x| *x = temp);
         }
         v
+    }
+}
+
+/// A `Lens` that always yields ().
+///
+/// This is useful when you wish to have a display only widget, require a type-erased widget, or
+/// obtain app data out of band and ignore your input. (E.g sub-windows)
+#[derive(Debug, Copy, Clone)]
+pub struct Unit<T> {
+    phantom_t: PhantomData<T>,
+}
+
+impl<T> Default for Unit<T> {
+    fn default() -> Self {
+        Unit {
+            phantom_t: Default::default(),
+        }
+    }
+}
+
+impl<T> Lens<T, ()> for Unit<T> {
+    fn with<V, F: FnOnce(&()) -> V>(&self, _data: &T, f: F) -> V {
+        f(&())
+    }
+    fn with_mut<V, F: FnOnce(&mut ()) -> V>(&self, _data: &mut T, f: F) -> V {
+        f(&mut ())
     }
 }

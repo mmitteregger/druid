@@ -56,13 +56,38 @@ use crate::keyboard_types::KeyState;
 use crate::mouse::{Cursor, MouseButton, MouseButtons, MouseEvent};
 use crate::region::Region;
 use crate::scale::Scale;
-use crate::window::{IdleToken, TimerToken, WinHandler};
-use crate::window;
+use crate::window::{IdleToken, TimerToken, WinHandler, WindowLevel, WindowState};
 use crate::Error;
-
 
 #[allow(non_upper_case_globals)]
 const NSWindowDidBecomeKeyNotification: &str = "NSWindowDidBecomeKeyNotification";
+
+#[allow(dead_code)]
+#[allow(non_upper_case_globals)]
+mod levels {
+    use crate::window::WindowLevel;
+
+    // These are the levels that AppKit seems to have.
+    pub const NSModalPanelLevel: i32 = 24;
+    pub const NSNormalWindowLevel: i32 = 0;
+    pub const NSFloatingWindowLevel: i32 = 3;
+    pub const NSTornOffMenuWindowLevel: i32 = NSFloatingWindowLevel;
+    pub const NSSubmenuWindowLevel: i32 = NSFloatingWindowLevel;
+    pub const NSModalPanelWindowLevel: i32 = 8;
+    pub const NSStatusWindowLevel: i32 = 25;
+    pub const NSPopUpMenuWindowLevel: i32 = 101;
+    pub const NSScreenSaverWindowLevel: i32 = 1000;
+
+    pub fn as_raw_window_level(window_level: WindowLevel) -> i32 {
+        use WindowLevel::*;
+        match window_level {
+            AppWindow => NSNormalWindowLevel,
+            Tooltip => NSFloatingWindowLevel,
+            DropDown => NSFloatingWindowLevel,
+            Modal => NSModalPanelWindowLevel,
+        }
+    }
+}
 
 #[derive(Clone)]
 pub(crate) struct WindowHandle {
@@ -88,6 +113,9 @@ pub(crate) struct WindowBuilder {
     menu: Option<Menu>,
     size: Size,
     min_size: Option<Size>,
+    position: Option<Point>,
+    level: Option<WindowLevel>,
+    window_state: Option<WindowState>,
     resizable: bool,
     show_titlebar: bool,
 }
@@ -125,6 +153,9 @@ impl WindowBuilder {
             menu: None,
             size: Size::new(500.0, 400.0),
             min_size: None,
+            position: None,
+            level: None,
+            window_state: None,
             resizable: true,
             show_titlebar: true,
         }
@@ -147,16 +178,19 @@ impl WindowBuilder {
     }
 
     pub fn show_titlebar(&mut self, show_titlebar: bool) {
-        // TODO: Use this in `self.build`
         self.show_titlebar = show_titlebar;
     }
 
-    pub fn set_position(&mut self, _position: Point) {
-        log::warn!("WindowBuilder::set_position is currently unimplemented for mac platforms.");
+    pub fn set_level(&mut self, level: WindowLevel) {
+        self.level = Some(level);
     }
 
-    pub fn set_window_state(&self, _state: window::WindowState) {
-        log::warn!("WindowBuilder::set_window_state is currently unimplemented for mac platforms.");
+    pub fn set_position(&mut self, position: Point) {
+        self.position = Some(position)
+    }
+
+    pub fn set_window_state(&mut self, state: WindowState) {
+        self.window_state = Some(state);
     }
 
     pub fn set_title(&mut self, title: impl Into<String>) {
@@ -170,9 +204,12 @@ impl WindowBuilder {
     pub fn build(self) -> Result<WindowHandle, Error> {
         assert_main_thread();
         unsafe {
-            let mut style_mask = NSWindowStyleMask::NSTitledWindowMask
-                | NSWindowStyleMask::NSClosableWindowMask
+            let mut style_mask = NSWindowStyleMask::NSClosableWindowMask
                 | NSWindowStyleMask::NSMiniaturizableWindowMask;
+
+            if self.show_titlebar {
+                style_mask |= NSWindowStyleMask::NSTitledWindowMask;
+            }
 
             if self.resizable {
                 style_mask |= NSWindowStyleMask::NSResizableWindowMask;
@@ -183,7 +220,8 @@ impl WindowBuilder {
                 NSSize::new(self.size.width, self.size.height),
             );
 
-            let window = NSWindow::alloc(nil).initWithContentRect_styleMask_backing_defer_(
+            let window: id = msg_send![WINDOW_CLASS.0, alloc];
+            let window = window.initWithContentRect_styleMask_backing_defer_(
                 rect,
                 style_mask,
                 NSBackingStoreBuffered,
@@ -212,10 +250,22 @@ impl WindowBuilder {
             content_view.addSubview_(view);
             let view_state: *mut c_void = *(*view).get_ivar("viewState");
             let view_state = &mut *(view_state as *mut ViewState);
-            let handle = WindowHandle {
+            let mut handle = WindowHandle {
                 nsview: view_state.nsview.clone(),
                 idle_queue,
             };
+
+            if let Some(pos) = self.position {
+                handle.set_position(pos);
+            }
+            if let Some(window_state) = self.window_state {
+                handle.set_window_state(window_state);
+            }
+
+            if let Some(level) = self.level {
+                handle.set_level(level)
+            }
+
             (*view_state).handler.connect(&handle.clone().into());
             (*view_state).handler.scale(Scale::default());
             (*view_state)
@@ -403,6 +453,24 @@ fn make_view(handler: Box<dyn WinHandler>) -> (id, Weak<Mutex<Vec<IdleKind>>>) {
 
         (view.autorelease(), queue_handle)
     }
+}
+
+struct WindowClass(*const Class);
+unsafe impl Sync for WindowClass {}
+
+lazy_static! {
+    static ref WINDOW_CLASS: WindowClass = unsafe {
+        let mut decl =
+            ClassDecl::new("DruidWindow", class!(NSWindow)).expect("Window class defined");
+        decl.add_method(
+            sel!(canBecomeKeyWindow),
+            canBecomeKeyWindow as extern "C" fn(&Object, Sel) -> BOOL,
+        );
+        extern "C" fn canBecomeKeyWindow(_this: &Object, _sel: Sel) -> BOOL {
+            YES
+        }
+        WindowClass(decl.register())
+    };
 }
 
 extern "C" fn set_frame_size(this: &mut Object, _: Sel, size: NSSize) {
@@ -876,31 +944,99 @@ impl WindowHandle {
     // TODO: Implement this
     pub fn show_titlebar(&self, _show_titlebar: bool) {}
 
-    pub fn set_position(&self, _position: Point) {
-        log::warn!("WindowHandle::set_position is currently unimplemented for Mac.");
+    // Need to translate mac y coords, as they start from bottom left
+    pub fn set_position(&self, position: Point) {
+        unsafe {
+            // TODO this should be the max y in orig mac coords
+            let screen_height = crate::Screen::get_display_rect().height();
+            let window: id = msg_send![*self.nsview.load(), window];
+            let frame: NSRect = msg_send![window, frame];
+
+            let mut new_frame = frame;
+            new_frame.origin.x = position.x;
+            new_frame.origin.y = screen_height - position.y - frame.size.height; // Flip back
+            let () = msg_send![window, setFrame: new_frame display: YES];
+        }
     }
 
     pub fn get_position(&self) -> Point {
-        log::warn!("WindowHandle::get_position is currently unimplemented for Mac.");
-        Point::new(0.0, 0.0)
+        unsafe {
+            // TODO this should be the max y in orig mac coords
+            let screen_height = crate::Screen::get_display_rect().height();
+
+            let window: id = msg_send![*self.nsview.load(), window];
+            let current_frame: NSRect = msg_send![window, frame];
+
+            Point::new(
+                current_frame.origin.x,
+                screen_height - current_frame.origin.y - current_frame.size.height,
+            )
+        }
     }
 
-    pub fn set_size(&self, _size: Size) {
-        log::warn!("WindowHandle::set_size is currently unimplemented for Mac.");
+    pub fn set_level(&self, level: WindowLevel) {
+        unsafe {
+            let level = levels::as_raw_window_level(level);
+            let window: id = msg_send![*self.nsview.load(), window];
+            let () = msg_send![window, setLevel: level];
+        }
+    }
+
+    pub fn set_size(&self, size: Size) {
+        unsafe {
+            let window: id = msg_send![*self.nsview.load(), window];
+            let current_frame: NSRect = msg_send![window, frame];
+            let mut new_frame = current_frame;
+            new_frame.size.width = size.width;
+            new_frame.size.height = size.height;
+            let () = msg_send![window, setFrame: new_frame display: YES];
+        }
     }
 
     pub fn get_size(&self) -> Size {
-        log::warn!("WindowHandle::get_size is currently unimplemented for Mac.");
-        Size::new(0.0, 0.0)
+        unsafe {
+            let window: id = msg_send![*self.nsview.load(), window];
+            let current_frame: NSRect = msg_send![window, frame];
+            Size::new(current_frame.size.width, current_frame.size.height)
+        }
     }
 
-    pub fn set_window_state(&self, _state: window::WindowState) {
-        log::warn!("WindowHandle::set_window_state is currently unimplemented for Mac.");
+    pub fn get_window_state(&self) -> WindowState {
+        unsafe {
+            let window: id = msg_send![*self.nsview.load(), window];
+            let isMin: BOOL = msg_send![window, isMiniaturized];
+            if isMin != NO {
+                return WindowState::MINIMIZED;
+            }
+            let isZoomed: BOOL = msg_send![window, isZoomed];
+            if isZoomed != NO {
+                return WindowState::MAXIMIZED;
+            }
+        }
+        WindowState::RESTORED
     }
 
-    pub fn get_window_state(&self) -> window::WindowState {
-        log::warn!("WindowHandle::get_window_state is currently unimplemented for Mac.");
-        window::WindowState::RESTORED
+    pub fn set_window_state(&mut self, state: WindowState) {
+        let cur_state = self.get_window_state();
+        unsafe {
+            let window: id = msg_send![*self.nsview.load(), window];
+            match (state, cur_state) {
+                (s1, s2) if s1 == s2 => (),
+                (WindowState::MINIMIZED, _) => {
+                    let () = msg_send![window, performMiniaturize: self];
+                }
+                (WindowState::MAXIMIZED, _) => {
+                    let () = msg_send![window, performZoom: self];
+                }
+                (WindowState::RESTORED, WindowState::MAXIMIZED) => {
+                    let () = msg_send![window, performZoom: self];
+                }
+                (WindowState::RESTORED, WindowState::MINIMIZED) => {
+                    let () = msg_send![window, deminiaturize: self];
+                }
+                (WindowState::RESTORED, WindowState::RESTORED) => {} // Can't be reached
+            }
+        }
     }
 
     pub fn handle_titlebar(&self, _val: bool) {

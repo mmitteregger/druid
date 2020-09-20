@@ -48,7 +48,43 @@ pub struct Dynamic<T> {
     resolved: String,
 }
 
-/// A label that displays some text.
+/// A label that draws some text.
+///
+/// A label is the easiest way to display text in Druid. A label is instantiated
+/// with some [`LabelText`] type, such as a `String` or a [`LocalizedString`],
+/// and also has methods for setting the default font, font-size, text color,
+/// and other attributes.
+///
+/// In addition to being a [`Widget`], `Label` is also regularly used as a
+/// component in other widgets that wish to display text; to facilitate this
+/// it has a [`draw_at`] method that allows the caller to easily draw the label's
+/// text at the desired position on screen.
+///
+/// # Examples
+///
+/// Make a label to say something **very** important:
+///
+/// ```
+/// # use druid::widget::{Label, SizedBox};
+/// # use druid::*;
+///
+/// let font = FontDescriptor::new(FontFamily::SYSTEM_UI)
+///     .with_weight(FontWeight::BOLD)
+///     .with_size(48.0);
+///
+/// let important_label = Label::new("WATCH OUT!")
+///     .with_font(font)
+///     .with_text_color(Color::rgb(1.0, 0.2, 0.2));
+/// # // our data type T isn't known; this is just a trick for the compiler
+/// # // to keep our example clean
+/// # let _ = SizedBox::<()>::new(important_label);
+/// ```
+///
+///
+/// [`LabelText`]: struct.LabelText.html
+/// [`LocalizedString`]: ../struct.LocalizedString.html
+/// [`draw_at`]: #method.draw_at
+/// [`Widget`]: ../trait.Widget.html
 pub struct Label<T> {
     text: LabelText<T>,
     layout: TextLayout,
@@ -92,7 +128,7 @@ impl<T: Data> Label<T> {
         Self {
             text,
             layout,
-            line_break_mode: LineBreaking::Clip,
+            line_break_mode: LineBreaking::Overflow,
             needs_rebuild: true,
         }
     }
@@ -241,6 +277,7 @@ impl<T: Data> Label<T> {
     /// [`LineBreaking`]: enum.LineBreaking.html
     pub fn set_line_break_mode(&mut self, mode: LineBreaking) {
         self.line_break_mode = mode;
+        self.needs_rebuild = true;
     }
 
     /// Set the [`TextAlignment`] for this layout.
@@ -251,8 +288,17 @@ impl<T: Data> Label<T> {
         self.needs_rebuild = true;
     }
 
+    /// Draw this label's text at the provided `Point`, without internal padding.
+    ///
+    /// This is a convenience for widgets that want to use Label as a way
+    /// of managing a dynamic or localized string, but want finer control
+    /// over where the text is drawn.
+    pub fn draw_at(&self, ctx: &mut PaintCtx, origin: impl Into<Point>) {
+        self.layout.draw(ctx, origin)
+    }
+
     fn rebuild_if_needed(&mut self, factory: &mut PietText, data: &T, env: &Env) {
-        if self.needs_rebuild {
+        if self.needs_rebuild || self.layout.needs_rebuild() {
             self.text.resolve(data, env);
             self.layout.set_text(self.text.display_text());
             self.layout.rebuild_if_needed(factory, env);
@@ -308,8 +354,7 @@ impl<T: Data> Widget<T> for Label<T> {
     fn lifecycle(&mut self, _ctx: &mut LifeCycleCtx, _event: &LifeCycle, _data: &T, _env: &Env) {}
 
     fn update(&mut self, ctx: &mut UpdateCtx, old_data: &T, data: &T, _env: &Env) {
-        //FIXME: this should also be checking if anything in the env has changed
-        if !old_data.same(data) {
+        if !old_data.same(data) | self.layout.needs_rebuild_after_update(ctx) {
             self.needs_rebuild = true;
             ctx.request_layout();
         }
@@ -323,8 +368,8 @@ impl<T: Data> Widget<T> for Label<T> {
             _ => f64::INFINITY,
         };
 
-        self.rebuild_if_needed(&mut ctx.text(), data, env);
         self.layout.set_wrap_width(width);
+        self.rebuild_if_needed(&mut ctx.text(), data, env);
 
         let mut text_size = self.layout.size();
         text_size.width += 2. * LABEL_X_PADDING;
@@ -338,7 +383,7 @@ impl<T: Data> Widget<T> for Label<T> {
         if self.line_break_mode == LineBreaking::Clip {
             ctx.clip(label_size.to_rect());
         }
-        self.layout.draw(ctx, origin)
+        self.draw_at(ctx, origin)
     }
 }
 

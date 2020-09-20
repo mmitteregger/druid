@@ -87,7 +87,7 @@ struct EnvImpl {
 ///
 /// [`ValueType`]: trait.ValueType.html
 /// [`Env`]: struct.Env.html
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Key<T> {
     key: &'static str,
     value_type: PhantomData<*const T>,
@@ -97,7 +97,7 @@ pub struct Key<T> {
 // could be defined per-app
 // Also consider Box<Any> (though this would also impact debug).
 /// A dynamic type representing all values that can be stored in an environment.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 #[allow(missing_docs)]
 // ANCHOR: value_type
 pub enum Value {
@@ -120,7 +120,7 @@ pub enum Value {
 ///
 /// [`Key<T>`]: struct.Key.html
 /// [`Env`]: struct.Env.html
-#[derive(Clone, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum KeyOrValue<T> {
     /// A concrete [`Value`] of type `T`.
     ///
@@ -131,6 +131,35 @@ pub enum KeyOrValue<T> {
     /// [`Key<T>`]: struct.Key.html
     /// [`Env`]: struct.Env.html
     Key(Key<T>),
+}
+
+/// A trait for anything that can resolve a value of some type from the [`Env`].
+///
+/// This is a generalization of the idea of [`KeyOrValue`], mostly motivated
+/// by wanting to improve the API used for checking if items in the [`Env`] have changed.
+///
+/// [`Env`]: struct.Env.html
+/// [`KeyOrValue`]: enum.KeyOrValue.html
+pub trait KeyLike<T> {
+    /// Returns `true` if this item has changed between the old and new [`Env`].
+    ///
+    /// [`Env`]: struct.Env.html
+    fn changed(&self, old: &Env, new: &Env) -> bool;
+}
+
+impl<T: ValueType> KeyLike<T> for Key<T> {
+    fn changed(&self, old: &Env, new: &Env) -> bool {
+        !old.get_untyped(self).same(new.get_untyped(self))
+    }
+}
+
+impl<T> KeyLike<T> for KeyOrValue<T> {
+    fn changed(&self, old: &Env, new: &Env) -> bool {
+        match self {
+            KeyOrValue::Concrete(_) => false,
+            KeyOrValue::Key(key) => !old.get_untyped(key).same(new.get_untyped(key)),
+        }
+    }
 }
 
 /// Values which can be stored in an environment.
@@ -244,7 +273,7 @@ impl Env {
     /// Panics if the key is not found.
     ///
     /// [`Value`]: enum.Value.html
-    pub fn get_untyped(&self, key: impl Borrow<Key<()>>) -> &Value {
+    pub fn get_untyped<V>(&self, key: impl Borrow<Key<V>>) -> &Value {
         match self.try_get_untyped(key) {
             Ok(val) => val,
             Err(err) => panic!("{}", err),
@@ -259,7 +288,7 @@ impl Env {
     /// e.g. for debugging, theme editing, and theme loading.
     ///
     /// [`Value`]: enum.Value.html
-    pub fn try_get_untyped(&self, key: impl Borrow<Key<()>>) -> Result<&Value, MissingKeyError> {
+    pub fn try_get_untyped<V>(&self, key: impl Borrow<Key<V>>) -> Result<&Value, MissingKeyError> {
         self.0.map.get(key.borrow().key).ok_or(MissingKeyError {
             key: key.borrow().key.into(),
         })
@@ -470,10 +499,12 @@ impl Default for Env {
             debug_colors,
         };
 
-        Env(Arc::new(inner))
+        let env = Env(Arc::new(inner))
             .adding(Env::DEBUG_PAINT, false)
             .adding(Env::DEBUG_WIDGET_ID, false)
-            .adding(Env::DEBUG_WIDGET, false)
+            .adding(Env::DEBUG_WIDGET, false);
+
+        crate::theme::add_to_env(env)
     }
 }
 

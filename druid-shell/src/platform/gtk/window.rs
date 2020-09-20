@@ -27,7 +27,7 @@ use std::time::Instant;
 
 use anyhow::anyhow;
 use cairo::Surface;
-use gdk::{EventKey, EventMask, ModifierType, ScrollDirection, WindowExt};
+use gdk::{EventKey, EventMask, ModifierType, ScrollDirection, WindowExt, WindowTypeHint};
 use gio::ApplicationExt;
 use gtk::prelude::*;
 use gtk::{AccelGroup, ApplicationWindow, DrawingArea};
@@ -42,8 +42,8 @@ use crate::keyboard::{KbKey, KeyEvent, KeyState, Modifiers};
 use crate::mouse::{Cursor, MouseButton, MouseButtons, MouseEvent};
 use crate::region::Region;
 use crate::scale::{Scalable, Scale, ScaledArea};
-use crate::window::{IdleToken, TimerToken, WinHandler};
 use crate::window;
+use crate::window::{IdleToken, TimerToken, WinHandler, WindowLevel};
 
 use super::application::Application;
 use super::dialog;
@@ -97,6 +97,9 @@ pub(crate) struct WindowBuilder {
     handler: Option<Box<dyn WinHandler>>,
     title: String,
     menu: Option<Menu>,
+    position: Option<Point>,
+    level: Option<WindowLevel>,
+    state: Option<window::WindowState>,
     size: Size,
     min_size: Option<Size>,
     resizable: bool,
@@ -151,6 +154,9 @@ impl WindowBuilder {
             title: String::new(),
             menu: None,
             size: Size::new(500.0, 400.0),
+            position: None,
+            level: None,
+            state: None,
             min_size: None,
             resizable: true,
             show_titlebar: true,
@@ -177,12 +183,16 @@ impl WindowBuilder {
         self.show_titlebar = show_titlebar;
     }
 
-    pub fn set_position(&mut self, _position: Point) {
-        log::warn!("WindowBuilder::set_position is currently unimplemented for gtk.");
+    pub fn set_position(&mut self, position: Point) {
+        self.position = Some(position);
     }
 
-    pub fn set_window_state(&self, _state: window::WindowState) {
-        log::warn!("WindowBuilder::set_window_state is currently unimplemented for gtk.");
+    pub fn set_level(&mut self, level: WindowLevel) {
+        self.level = Some(level);
+    }
+
+    pub fn set_window_state(&mut self, state: window::WindowState) {
+        self.state = Some(state);
     }
 
     pub fn set_title(&mut self, title: impl Into<String>) {
@@ -243,9 +253,18 @@ impl WindowBuilder {
                 let _ = &win_state;
             }));
 
-        let handle = WindowHandle {
+        let mut handle = WindowHandle {
             state: Arc::downgrade(&win_state),
         };
+        if let Some(level) = self.level {
+            handle.set_level(level);
+        }
+        if let Some(pos) = self.position {
+            handle.set_position(pos);
+        }
+        if let Some(state) = self.state {
+            handle.set_window_state(state)
+        }
 
         if let Some(menu) = self.menu {
             let menu = menu.into_gtk_menubar(&handle, &accel_group);
@@ -675,31 +694,80 @@ impl WindowHandle {
         }
     }
 
-    pub fn set_position(&self, _position: Point) {
-        log::warn!("WindowHandle::set_position is currently unimplemented for gtk.");
+    pub fn set_position(&self, position: Point) {
+        if let Some(state) = self.state.upgrade() {
+            state.window.move_(position.x as i32, position.y as i32)
+        }
     }
 
     pub fn get_position(&self) -> Point {
-        log::warn!("WindowHandle::get_position is currently unimplemented for gtk.");
-        Point::new(0.0, 0.0)
+        if let Some(state) = self.state.upgrade() {
+            let (x, y) = state.window.get_position();
+            Point::new(x as f64, y as f64)
+        } else {
+            Point::new(0.0, 0.0)
+        }
     }
 
-    pub fn set_size(&self, _size: Size) {
-        log::warn!("WindowHandle::set_size is currently unimplemented for gtk.");
+    pub fn set_level(&self, level: WindowLevel) {
+        if let Some(state) = self.state.upgrade() {
+            let hint = match level {
+                WindowLevel::AppWindow => WindowTypeHint::Normal,
+                WindowLevel::Tooltip => WindowTypeHint::Tooltip,
+                WindowLevel::DropDown => WindowTypeHint::DropdownMenu,
+                WindowLevel::Modal => WindowTypeHint::Dialog,
+            };
+
+            state.window.set_type_hint(hint);
+        }
+    }
+
+    pub fn set_size(&self, size: Size) {
+        if let Some(state) = self.state.upgrade() {
+            state.window.resize(size.width as i32, size.height as i32)
+        }
     }
 
     pub fn get_size(&self) -> Size {
-        log::warn!("WindowHandle::get_size is currently unimplemented for gtk.");
-        Size::new(0.0, 0.0)
+        if let Some(state) = self.state.upgrade() {
+            let (x, y) = state.window.get_size();
+            Size::new(x as f64, y as f64)
+        } else {
+            log::warn!("Could not get size for GTK window");
+            Size::new(0., 0.)
+        }
     }
 
-    pub fn set_window_state(&self, _state: window::WindowState) {
-        log::warn!("WindowHandle::set_window_state is currently unimplemented for gtk.");
+    pub fn set_window_state(&mut self, size_state: window::WindowState) {
+        use window::WindowState::{MAXIMIZED, MINIMIZED, RESTORED};
+        let cur_size_state = self.get_window_state();
+        if let Some(state) = self.state.upgrade() {
+            match (size_state, cur_size_state) {
+                (s1, s2) if s1 == s2 => (),
+                (MAXIMIZED, _) => state.window.maximize(),
+                (MINIMIZED, _) => state.window.iconify(),
+                (RESTORED, MAXIMIZED) => state.window.unmaximize(),
+                (RESTORED, MINIMIZED) => state.window.deiconify(),
+                (RESTORED, RESTORED) => (), // Unreachable
+            }
+
+            state.window.unmaximize();
+        }
     }
 
     pub fn get_window_state(&self) -> window::WindowState {
-        log::warn!("WindowHandle::get_window_state is currently unimplemented for gtk.");
-        window::WindowState::RESTORED
+        use window::WindowState::{MAXIMIZED, MINIMIZED, RESTORED};
+        if let Some(state) = self.state.upgrade() {
+            if state.window.is_maximized() {
+                return MAXIMIZED;
+            } else if let Some(window) = state.window.get_parent_window() {
+                let state = window.get_state();
+                if (state & gdk::WindowState::ICONIFIED) == gdk::WindowState::ICONIFIED {
+                    return MINIMIZED;
+                }
+            }
+        }
+        RESTORED
     }
 
     pub fn handle_titlebar(&self, _val: bool) {
