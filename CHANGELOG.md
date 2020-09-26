@@ -34,12 +34,14 @@ You can find its changes [documented below](#060---2020-06-01).
 - `TextLayout` type simplifies drawing text ([#1182] by [@cmyr])
 - Implementation of `Data` trait for `i128` and `u128` primitive data types. ([#1214] by [@koutoftimer])
 - `LineBreaking` enum allows configuration of label line-breaking ([#1195] by [@cmyr])
-- `TextAlignment` support in `TextLayout` and `Label` ([#1210] by [@cmyr])`
+- `TextAlignment` support in `TextLayout` and `Label` ([#1210] by [@cmyr])
 - `UpdateCtx` gets `env_changed` and `env_key_changed` methods ([#1207] by [@cmyr])
 - `Button::from_label` to construct a `Button` with a provided `Label`. ([#1226] by [@ForLoveOfCats])
 - Lens: Added Unit lens for type erased / display only widgets that do not need data. ([#1232] by [@rjwittams])
 - `WindowLevel` to control system window Z order, with Mac and GTK implementations  ([#1231] by [@rjwittams])
 - WIDGET_PADDING items added to theme and `Flex::with_default_spacer`/`Flex::add_default_spacer` ([#1220] by [@cmyr])
+- CONFIGURE_WINDOW command to allow reconfiguration of an existing window. ([#1235] by [@rjwittams])
+- `RawLabel` widget displays text `Data`. ([#1252] by [@cmyr])
 
 ### Changed
 
@@ -58,6 +60,9 @@ You can find its changes [documented below](#060---2020-06-01).
 - `Movement::RightOfLine` to `Movement::NextLineBreak`, and `Movement::LeftOfLine` to `Movement::PrecedingLineBreak`. ([#1092] by [@sysint64])
 - `AnimFrame` was moved from `lifecycle` to `event` ([#1155] by [@jneem])
 - Contexts' `text()` methods return `&mut PietText` instead of cloning ([#1205] by [@cmyr])
+- Window construction: WindowDesc decomposed to PendingWindow and WindowConfig to allow for sub-windows and reconfiguration. ([#1235] by [@rjwittams])
+- `LocalizedString` and `LabelText` use `ArcStr` instead of String ([#1245] by [@cmyr])
+- `LensWrap` widget moved into widget module ([#1251] by [@cmyr])
 
 ### Deprecated
 
@@ -87,6 +92,7 @@ You can find its changes [documented below](#060---2020-06-01).
 - Switch widget: Toggle animation being window refresh rate dependent ([#1145] by [@ForLoveOfCats])
 - Multi-click on Windows, partial fix for #859 ([#1157] by [@raphlinus])
 - Windows: fix crash on resize from incompatible resources ([#1191 by [@raphlinus]])
+- GTK: Related dependencies are now optional, facilitating a pure X11 build. ([#1241] by [@finnerale])
 
 ### Visual
 
@@ -459,6 +465,10 @@ Last release without a changelog :(
 [#1231]: https://github.com/linebender/druid/pull/1231
 [#1220]: https://github.com/linebender/druid/pull/1220
 [#1238]: https://github.com/linebender/druid/pull/1238
+[#1241]: https://github.com/linebender/druid/pull/1241
+[#1245]: https://github.com/linebender/druid/pull/1245
+[#1251]: https://github.com/linebender/druid/pull/1251
+[#1252]: https://github.com/linebender/druid/pull/1252
 
 [Unreleased]: https://github.com/linebender/druid/compare/v0.6.0...master
 [0.6.0]: https://github.com/linebender/druid/compare/v0.5.0...v0.6.0

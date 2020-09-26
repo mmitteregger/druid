@@ -17,9 +17,9 @@
 use super::invalidation::DebugInvalidation;
 use super::{
     Align, BackgroundBrush, Click, Container, Controller, ControllerHost, EnvScope,
-    IdentityWrapper, LabelText, Padding, Parse, SizedBox, TooltipController, WidgetId,
+    IdentityWrapper, LabelText, LensWrap, Padding, Parse, SizedBox, TooltipController, WidgetId,
 };
-use crate::{Color, Data, Env, EventCtx, Insets, KeyOrValue, Lens, LensWrap, UnitPoint, Widget};
+use crate::{Color, Data, Env, EventCtx, Insets, KeyOrValue, Lens, UnitPoint, Widget};
 
 /// A trait that provides extra methods for combining `Widget`s.
 pub trait WidgetExt<T: Data>: Widget<T> + Sized + 'static {
