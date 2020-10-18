@@ -21,9 +21,9 @@ use crate::contexts::ContextState;
 use crate::kurbo::{Affine, Insets, Point, Rect, Shape, Size, Vec2};
 use crate::util::ExtendDrain;
 use crate::{
-    BoxConstraints, Color, Command, Data, Env, Event, EventCtx, InternalEvent, InternalLifeCycle,
-    LayoutCtx, LifeCycle, LifeCycleCtx, PaintCtx, Region, RenderContext, Target, TextLayout,
-    TimerToken, UpdateCtx, Widget, WidgetId,
+    ArcStr, BoxConstraints, Color, Command, Data, Env, Event, EventCtx, InternalEvent,
+    InternalLifeCycle, LayoutCtx, LifeCycle, LifeCycleCtx, PaintCtx, Region, RenderContext, Target,
+    TextLayout, TimerToken, UpdateCtx, Widget, WidgetId,
 };
 
 /// Our queue type
@@ -50,7 +50,7 @@ pub struct WidgetPod<T, W> {
     env: Option<Env>,
     inner: W,
     // stashed layout so we don't recompute this when debugging
-    debug_widget_text: TextLayout,
+    debug_widget_text: TextLayout<ArcStr>,
 }
 
 /// Generic state for all widgets in the hierarchy.
@@ -79,6 +79,13 @@ pub(crate) struct WidgetState {
     /// In general, these will be zero; the exception is for things like
     /// drop shadows or overflowing text.
     pub(crate) paint_insets: Insets,
+
+    /// The offset of the baseline relative to the bottom of the widget.
+    ///
+    /// In general, this will be zero; the bottom of the widget will be considered
+    /// the baseline. Widgets that contain text or controls that expect to be
+    /// laid out alongside text can set this as appropriate.
+    pub(crate) baseline_offset: f64,
 
     // The region that needs to be repainted, relative to the widget's bounds.
     pub(crate) invalid: Region,
@@ -144,7 +151,7 @@ impl<T, W: Widget<T>> WidgetPod<T, W> {
             old_data: None,
             env: None,
             inner,
-            debug_widget_text: TextLayout::new(""),
+            debug_widget_text: TextLayout::new(),
         }
     }
 
@@ -313,6 +320,11 @@ impl<T, W: Widget<T>> WidgetPod<T, W> {
         union_pant_rect - parent_bounds
     }
 
+    /// The distance from the bottom of this widget to the baseline.
+    pub fn baseline_offset(&self) -> f64 {
+        self.state.baseline_offset
+    }
+
     /// Determines if the provided `mouse_pos` is inside `rect`
     /// and if so updates the hot state and sends `LifeCycle::HotChanged`.
     ///
@@ -433,7 +445,7 @@ impl<T: Data, W: Widget<T>> WidgetPod<T, W> {
                 Color::BLACK
             };
             let id_string = id.to_raw().to_string();
-            self.debug_widget_text.set_text(id_string);
+            self.debug_widget_text.set_text(id_string.into());
             self.debug_widget_text.set_text_size(10.0);
             self.debug_widget_text.set_text_color(text_color);
             self.debug_widget_text.rebuild_if_needed(ctx.text(), env);
@@ -884,6 +896,7 @@ impl WidgetState {
             paint_insets: Insets::ZERO,
             invalid: Region::EMPTY,
             viewport_offset: Vec2::ZERO,
+            baseline_offset: 0.0,
             is_hot: false,
             needs_layout: false,
             is_active: false,

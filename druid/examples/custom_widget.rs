@@ -18,7 +18,7 @@ use druid::kurbo::BezPath;
 use druid::piet::{FontFamily, ImageFormat, InterpolationMode};
 use druid::widget::prelude::*;
 use druid::{
-    Affine, AppLauncher, Color, FontDescriptor, LocalizedString, Point, Rect, TextLayout,
+    Affine, AppLauncher, ArcStr, Color, FontDescriptor, LocalizedString, Point, Rect, TextLayout,
     WindowDesc,
 };
 
@@ -63,7 +63,7 @@ impl Widget<String> for CustomWidget {
         // Clear the whole widget with the color of your choice
         // (ctx.size() returns the size of the layout rect we're painting in)
         let size = ctx.size();
-        let rect = Rect::from_origin_size(Point::ORIGIN, size);
+        let rect = size.to_rect();
         ctx.fill(rect, &Color::WHITE);
 
         // Note: ctx also has a `clear` method, but that clears the whole context,
@@ -86,7 +86,7 @@ impl Widget<String> for CustomWidget {
 
         // Text is easy; in real use TextLayout should be stored in the widget
         // and reused.
-        let mut layout = TextLayout::new(data.as_str());
+        let mut layout = TextLayout::<ArcStr>::from_text(data.to_owned());
         layout.set_font(FontDescriptor::new(FontFamily::SERIF).with_size(24.0));
         layout.set_text_color(fill_color);
         layout.rebuild_if_needed(ctx.text(), env);
@@ -105,11 +105,7 @@ impl Widget<String> for CustomWidget {
             .make_image(256, 256, &image_data, ImageFormat::RgbaSeparate)
             .unwrap();
         // The image is automatically scaled to fit the rect you pass to draw_image
-        ctx.draw_image(
-            &image,
-            Rect::from_origin_size(Point::ORIGIN, size),
-            InterpolationMode::Bilinear,
-        );
+        ctx.draw_image(&image, size.to_rect(), InterpolationMode::Bilinear);
     }
 }
 

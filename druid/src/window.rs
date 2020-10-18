@@ -20,7 +20,7 @@ use std::mem;
 // Automatically defaults to std::time::Instant on non Wasm platforms
 use instant::Instant;
 
-use crate::kurbo::{Point, Rect, Size};
+use crate::kurbo::Rect;
 use crate::piet::{Piet, RenderContext};
 use crate::shell::{Counter, Cursor, Region, WindowHandle};
 
@@ -32,9 +32,9 @@ use crate::util::ExtendDrain;
 use crate::widget::LabelText;
 use crate::win_handler::RUN_COMMANDS_TOKEN;
 use crate::{
-    BoxConstraints, Command, Data, Env, Event, EventCtx, ExtEventSink, InternalEvent,
-    InternalLifeCycle, LayoutCtx, LifeCycle, LifeCycleCtx, MenuDesc, PaintCtx, TimerToken,
-    UpdateCtx, Widget, WidgetId, WidgetPod,
+    BoxConstraints, Command, Data, Env, Event, EventCtx, ExtEventSink, Handled, InternalEvent,
+    InternalLifeCycle, LayoutCtx, LifeCycle, LifeCycleCtx, MenuDesc, PaintCtx, Point, Size,
+    TimerToken, UpdateCtx, Widget, WidgetId, WidgetPod,
 };
 
 /// A unique identifier for a window.
@@ -173,8 +173,7 @@ impl<T: Data> Window<T> {
         }
     }
 
-    /// Returns true if the command was a modal command.
-    fn handle_modal_command(&mut self, state: &mut WidgetState, cmd: &Command) -> bool {
+    fn handle_modal_command(&mut self, state: &mut WidgetState, cmd: &Command) -> Handled {
         if cmd.is(ModalDesc::<T>::SHOW_MODAL) {
             let modal = cmd.get_unchecked(ModalDesc::<T>::SHOW_MODAL);
             // SHOW_MODAL is private to druid, and we already checked at command submission
@@ -185,7 +184,7 @@ impl<T: Data> Window<T> {
             // TODO: We could be more conservative about invalidation. The problem is that we
             // haven't laid out the modal yet, so we don't know how big it is. (also below)
             self.invalid.add_rect(self.size.to_rect());
-            true
+            Handled::Yes
         } else if cmd.is(ModalDesc::DISMISS_MODAL) {
             if self.modals.pop().is_some() {
                 state.children_changed = true;
@@ -193,7 +192,7 @@ impl<T: Data> Window<T> {
                 log::warn!("cannot dismiss modal; no modal shown");
             }
             self.invalid.add_rect(self.size.to_rect());
-            true
+            Handled::Yes
         } else if cmd.is(ModalDesc::SHOW_MODAL_NO_DATA) {
             if let Some(modal) = cmd.get_unchecked(ModalDesc::SHOW_MODAL_NO_DATA).take() {
                 self.modals.push(modal.lensed().into());
@@ -202,9 +201,9 @@ impl<T: Data> Window<T> {
                 log::error!("couldn't get modal payload");
             }
             self.invalid.add_rect(self.size.to_rect());
-            true
+            Handled::Yes
         } else {
-            false
+            Handled::No
         }
     }
 
@@ -214,7 +213,7 @@ impl<T: Data> Window<T> {
         event: Event,
         data: &mut T,
         env: &Env,
-    ) -> bool {
+    ) -> Handled {
         match &event {
             Event::WindowSize(size) => self.size = *size,
             Event::MouseDown(e) | Event::MouseUp(e) | Event::MouseMove(e) | Event::Wheel(e) => {
@@ -235,7 +234,7 @@ impl<T: Data> Window<T> {
                     Event::Internal(InternalEvent::RouteTimer(token, *widget_id))
                 } else {
                     log::error!("No widget found for timer {:?}", token);
-                    return false;
+                    return Handled::No;
                 }
             }
             other => other,
@@ -255,9 +254,12 @@ impl<T: Data> Window<T> {
         let modal_cmd = if let Event::Command(c) = &event {
             self.handle_modal_command(&mut widget_state, c)
         } else {
-            false
+            Handled::No
         };
-        let is_handled = modal_cmd || {
+
+        let is_handled = if modal_cmd == Handled::Yes {
+            Handled::Yes
+        } else {
             let mut state =
                 ContextState::new::<T>(queue, &self.ext_handle, &self.handle, self.id, self.focus);
             let mut ctx = EventCtx {
@@ -275,7 +277,7 @@ impl<T: Data> Window<T> {
                 }
             }
             self.root.event(&mut ctx, &event, data, env);
-            ctx.is_handled
+            Handled::from(ctx.is_handled)
         };
 
         // Clean up the timer token and do it immediately after the event handling
@@ -439,12 +441,8 @@ impl<T: Data> Window<T> {
         };
         let bc = BoxConstraints::tight(self.size);
         let size = self.root.layout(&mut layout_ctx, &bc, data, env);
-        self.root.set_layout_rect(
-            &mut layout_ctx,
-            data,
-            env,
-            Rect::from_origin_size(Point::ORIGIN, size),
-        );
+        self.root
+            .set_layout_rect(&mut layout_ctx, data, env, size.to_rect());
 
         for modal in &mut self.modals {
             let bc = BoxConstraints::new(Size::ZERO, size);

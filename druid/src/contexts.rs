@@ -294,14 +294,6 @@ impl_context_method!(EventCtx<'_, '_>, UpdateCtx<'_, '_>, LifeCycleCtx<'_, '_>, 
         self.widget_state.request_anim = true;
     }
 
-    /// Request a timer event.
-    ///
-    /// The return value is a token, which can be used to associate the
-    /// request with the event.
-    pub fn request_timer(&mut self, deadline: Duration) -> TimerToken {
-        self.state.request_timer(&mut self.widget_state, deadline)
-    }
-
     /// Indicate that your children have changed.
     ///
     /// Widgets must call this method after adding a new child.
@@ -319,7 +311,7 @@ impl_context_method!(EventCtx<'_, '_>, UpdateCtx<'_, '_>, LifeCycleCtx<'_, '_>, 
     }
 });
 
-// methods on event, update, and lifecycle
+// methods on everyone but paintctx
 impl_context_method!(
     EventCtx<'_, '_>,
     UpdateCtx<'_, '_>,
@@ -347,6 +339,14 @@ impl_context_method!(
         /// [`ExtEventSink`]: struct.ExtEventSink.html
         pub fn get_external_handle(&self) -> ExtEventSink {
             self.state.ext_handle.clone()
+        }
+
+        /// Request a timer event.
+        ///
+        /// The return value is a token, which can be used to associate the
+        /// request with the event.
+        pub fn request_timer(&mut self, deadline: Duration) -> TimerToken {
+            self.state.request_timer(&mut self.widget_state, deadline)
         }
     }
 );
@@ -652,6 +652,19 @@ impl LayoutCtx<'_, '_> {
     /// [`WidgetPod::paint_insets`]: struct.WidgetPod.html#method.paint_insets
     pub fn set_paint_insets(&mut self, insets: impl Into<Insets>) {
         self.widget_state.paint_insets = insets.into().nonnegative();
+    }
+
+    /// Set an explicit baseline position for this widget.
+    ///
+    /// The baseline position is used to align widgets that contain text,
+    /// such as buttons, labels, and other controls. It may also be used
+    /// by other widgets that are opinionated about how they are aligned
+    /// relative to neighbouring text, such as switches or checkboxes.
+    ///
+    /// The provided value should be the distance from the *bottom* of the
+    /// widget to the baseline.
+    pub fn set_baseline_offset(&mut self, baseline: f64) {
+        self.widget_state.baseline_offset = baseline
     }
 }
 

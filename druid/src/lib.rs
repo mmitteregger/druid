@@ -121,7 +121,7 @@
 //! [`image` crate]: https://crates.io/crates/image
 
 #![deny(
-    intra_doc_link_resolution_failure,
+    broken_intra_doc_links,
     unsafe_code,
     clippy::trivially_copy_pass_by_ref
 )]
@@ -142,6 +142,9 @@ pub use druid_shell::{kurbo, piet};
 #[doc(inline)]
 pub use im;
 
+#[macro_use]
+pub mod lens;
+
 mod app;
 mod app_delegate;
 mod bloom;
@@ -154,7 +157,6 @@ mod dialog;
 mod env;
 mod event;
 mod ext_event;
-pub mod lens;
 mod localization;
 mod menu;
 mod modal;
@@ -179,10 +181,10 @@ pub use piet::{
 // these are the types from shell that we expose; others we only use internally.
 pub use shell::keyboard_types;
 pub use shell::{
-    Application, Clipboard, ClipboardFormat, Code, Cursor, Error as PlatformError,
-    FileDialogOptions, FileInfo, FileSpec, FormatId, HotKey, KbKey, KeyEvent, Location, Modifiers,
-    Monitor, MouseButton, MouseButtons, RawMods, Region, Scalable, Scale, Screen, SysMods,
-    TimerToken, WindowHandle, WindowState,
+    Application, Clipboard, ClipboardFormat, Code, Cursor, CursorDesc, Error as PlatformError,
+    FileDialogOptions, FileInfo, FileSpec, FormatId, HotKey, ImageBuf, KbKey, KeyEvent, Location,
+    Modifiers, Monitor, MouseButton, MouseButtons, RawMods, Region, Scalable, Scale, Screen,
+    SysMods, TimerToken, WindowHandle, WindowState,
 };
 
 pub use crate::core::WidgetPod;
@@ -191,7 +193,7 @@ pub use app_delegate::{AppDelegate, DelegateCtx};
 pub use box_constraints::BoxConstraints;
 pub use command::{sys as commands, Command, Selector, SingleUse, Target};
 pub use contexts::{EventCtx, LayoutCtx, LifeCycleCtx, PaintCtx, UpdateCtx};
-pub use data::{ArcStr, Data};
+pub use data::Data;
 pub use dialog::DialogDesc;
 pub use env::{Env, Key, KeyOrValue, Value, ValueType};
 pub use event::{Event, InternalEvent, InternalLifeCycle, LifeCycle};
@@ -201,7 +203,8 @@ pub use localization::LocalizedString;
 pub use menu::{sys as platform_menus, ContextMenu, MenuDesc, MenuItem};
 pub use modal::ModalDesc;
 pub use mouse::MouseEvent;
-pub use text::{FontDescriptor, TextLayout};
+pub use text::{ArcStr, FontDescriptor, TextLayout};
+pub use util::Handled;
 pub use widget::{Widget, WidgetExt, WidgetId};
 pub use win_handler::DruidHandler;
 pub use window::{Window, WindowId};

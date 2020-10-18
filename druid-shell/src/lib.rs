@@ -26,7 +26,7 @@
 //! - `DRUID_SHELL_DISABLE_X11_PRESENT`: if this is set and `druid-shell` is using the `x11`
 //! backend, it will avoid using the Present extension.
 
-#![deny(intra_doc_link_resolution_failure)]
+#![warn(broken_intra_doc_links)]
 #![allow(clippy::new_without_default)]
 #![deny(clippy::trivially_copy_pass_by_ref)]
 
@@ -48,6 +48,7 @@ mod common_util;
 mod dialog;
 mod error;
 mod hotkey;
+mod image;
 mod keyboard;
 mod menu;
 mod mouse;
@@ -57,6 +58,7 @@ mod scale;
 mod screen;
 mod window;
 
+pub use crate::image::ImageBuf;
 pub use application::{AppHandler, Application};
 pub use clipboard::{Clipboard, ClipboardFormat, FormatId};
 pub use common_util::Counter;
@@ -65,13 +67,13 @@ pub use error::Error;
 pub use hotkey::{HotKey, RawMods, SysMods};
 pub use keyboard::{Code, IntoKey, KbKey, KeyEvent, KeyState, Location, Modifiers};
 pub use menu::Menu;
-pub use mouse::{Cursor, MouseButton, MouseButtons, MouseEvent};
+pub use mouse::{Cursor, CursorDesc, MouseButton, MouseButtons, MouseEvent};
 pub use region::Region;
 pub use scale::{Scalable, Scale, ScaledArea};
 pub use screen::{Monitor, Screen};
 pub use window::{
-    IdleHandle, IdleToken, TimerToken, WinHandler, WindowBuilder, WindowHandle, WindowLevel,
-    WindowState,
+    FileDialogToken, IdleHandle, IdleToken, TimerToken, WinHandler, WindowBuilder, WindowHandle,
+    WindowLevel, WindowState,
 };
 
 pub use keyboard_types;
