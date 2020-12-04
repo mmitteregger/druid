@@ -13,7 +13,7 @@ You can find its changes [documented below](#060---2020-06-01).
 - Added documentation to resizable() and show_titlebar() in WindowDesc. ([#1037] by [@rhzk])
 - Windows: Added internal functions to handle Re-entrancy. ([#1037] by [@rhzk])
 - Windows: WindowDesc: Create window with disabled titlebar, maximized or minimized state, and with position. ([#1037] by [@rhzk])
-- Windows: WindowHandle: Change window state. Toggle titlebar. Change size and position of window. ([#1037] by [@rhzk])
+- Windows: WindowHandle: Change window state. Toggle titlebar. Change size and position of window. ([#1037], [#1324] by [@rhzk])
 - Windows: WindowHandle: Added handle_titlebar(), Allowing a custom titlebar to behave like the OS one. ([#1037] by [@rhzk])
 - `OPEN_PANEL_CANCELLED` and `SAVE_PANEL_CANCELLED` commands. ([#1061] by @cmyr)
 - Export `Image` and `ImageData` by default. ([#1011] by [@covercash2])
@@ -42,6 +42,7 @@ You can find its changes [documented below](#060---2020-06-01).
 - `WindowLevel` to control system window Z order, with Mac and GTK implementations  ([#1231] by [@rjwittams])
 - WIDGET_PADDING items added to theme and `Flex::with_default_spacer`/`Flex::add_default_spacer` ([#1220] by [@cmyr])
 - CONFIGURE_WINDOW command to allow reconfiguration of an existing window. ([#1235] by [@rjwittams])
+- Added a ClipBox widget for building scrollable widgets ([#1248] by [@jneem])
 - `RawLabel` widget displays text `Data`. ([#1252] by [@cmyr])
 - 'Tabs' widget allowing static and dynamic tabbed layouts. ([#1160] by [@rjwittams])
 - `RichText` and `Attribute` types for creating rich text ([#1255] by [@cmyr])
@@ -49,9 +50,16 @@ You can find its changes [documented below](#060---2020-06-01).
 - TextBox supports vertical movement ([#1280] by [@cmyr])
 - Widgets can specify a baseline, flex rows can align baselines ([#1295] by [@cmyr])
 - `TextBox::with_text_color` and `TextBox::set_text_color` ([#1320] by [@cmyr])
+- `Checkbox::set_text` to update the label. ([#1346] by [@finnerale])
+- `Event::should_propagate_to_hidden` and `Lifecycle::should_propagate_to_hidden` to determine whether an event should be sent to hidden widgets (e.g. in `Tabs` or `Either`). ([#1351] by [@andrewhickman])
+- `set_cursor` can be called in the `update` method. ([#1361] by [@jneem])
+- `WidgetPod::is_initialized` to check if a widget has received `WidgetAdded`. ([#1259] by [@finnerale])
+- `TextBox::with_text_alignment` and `TextBox::set_text_alignment` ([#1371] by [@cmyr])
+- Add default minimum size to `WindowConfig`. ([#1438] by [@colinfruit])
 
 ### Changed
 
+- Windows: Reduced flashing when windows are created on high-dpi displays ([#1272] by [@rhzk])
 - Windows: Improved DPI handling. Druid should now redraw correctly when dpi changes. ([#1037] by [@rhzk])
 - windows: Window created with OS default size if not set. ([#1037] by [@rhzk])
 - `Scale::from_scale` to `Scale::new`, and `Scale` methods `scale_x` / `scale_y` to `x` / `y`. ([#1042] by [@xStrom])
@@ -72,6 +80,9 @@ You can find its changes [documented below](#060---2020-06-01).
 - `LocalizedString` and `LabelText` use `ArcStr` instead of String ([#1245] by [@cmyr])
 - `LensWrap` widget moved into widget module ([#1251] by [@cmyr])
 - `Delegate::command` now returns `Handled`, not `bool` ([#1298] by [@jneem])
+- `TextBox` selects all contents when tabbed to on macOS ([#1283] by [@cmyr])
+- All Image formats are now optional, reducing compile time and binary size by default ([#1340] by [@JAicewizard])
+- The `Cursor` API has changed to a stateful one ([#1433] by [@jneem])
 
 ### Deprecated
 
@@ -89,6 +100,7 @@ You can find its changes [documented below](#060---2020-06-01).
 - Ensure that `update` is called after all commands. ([#1062] by [@jneem])
 - X11: Support idle callbacks. ([#1072] by [@jneem])
 - GTK: Don't interrupt `KeyEvent.repeat` when releasing another key. ([#1081] by [@raphlinus])
+- Floor the origin for the Align widget to avoid blurry borders. ([#1091] by [@sysint64])
 - X11: Set some more common window properties. ([#1097] by [@psychon])
 - X11: Support timers. ([#1096] by [@psychon])
 - `EnvScope` now also updates the `Env` during `Widget::lifecycle`. ([#1100] by [@finnerale])
@@ -107,25 +119,35 @@ You can find its changes [documented below](#060---2020-06-01).
 - Able to select text in multiple TextBoxes at once. ([#1276] by [@sysint64])
 - The scroll bar now shows when the contents of a scrollable area change size. ([#1278] by [@Majora320])
 - Fix `widget::Either` using the wrong paint insets ([#1299] by [@andrewhickman])
+- Various fixes to cross-platform menus ([#1306] by [@raphlinus])
 - Improve Windows 7 DXGI compatibility ([#1311] by [@raphlinus])
-
+- Fixed `Either` not passing events to its hidden child correctly. ([#1351] by [@andrewhickman])
+- Don't drop events while showing file dialogs ([#1302], [#1328] by [@jneem])
+- Ensure that `LifeCycle::WidgetAdded` is the first thing a widget sees. ([#1259] by [@finnerale])
+- Fix a missed call to `CloseClipboard` on Windows. ([#1410] by [@andrewhickman])
+- WidgetPod: change not laid out `debug_panic` to warning ([#1441] by [@Maan2003])
 ### Visual
 
 - `TextBox` stroke remains inside its `paint_rect`. ([#1007] by [@jneem])
 
 ### Docs
 
+- Added a book chapter about resolution independence. ([#913] by [@xStrom])
 - Added documentation for the `Image` widget. ([#1018] by [@covercash2])
 - Fixed a link in `druid::command` documentation. ([#1008] by [@covercash2])
+- Fixed broken links in `druid::widget::Container` documentation. ([#1357] by [@StarfightLP])
 
 ### Examples
 
 - Specify feature requirements in a standard way. ([#1050] by [@xStrom])
+- Added `event_viewer` example ([#1326] by [@cmyr])
+- Rename `ext_event` to `async_event`. ([#1401] by [@JAicewizard])
 
 ### Maintenance
 
 - Standardized web targeting terminology. ([#1013] by [@xStrom])
 - X11: Ported the X11 backend to [`x11rb`](https://github.com/psychon/x11rb). ([#1025] by [@jneem])
+- Add `debug_panic` macro for when a backtrace is useful but a panic unnecessary. ([#1259] by [@finnerale])
 
 ### Outside News
 
@@ -335,6 +357,8 @@ Last release without a changelog :(
 [@tay64]: https://github.com/tay64
 [@JAicewizard]: https://github.com/JAicewizard
 [@andrewhickman]: https://github.com/andrewhickman
+[@colinfruit]: https://github.com/colinfruit
+[@Maan2003]: https://github.com/Maan2003
 
 [#599]: https://github.com/linebender/druid/pull/599
 [#611]: https://github.com/linebender/druid/pull/611
@@ -390,6 +414,7 @@ Last release without a changelog :(
 [#905]: https://github.com/linebender/druid/pull/905
 [#907]: https://github.com/linebender/druid/pull/907
 [#909]: https://github.com/linebender/druid/pull/909
+[#913]: https://github.com/linebender/druid/pull/913
 [#915]: https://github.com/linebender/druid/pull/915
 [#916]: https://github.com/linebender/druid/pull/916
 [#917]: https://github.com/linebender/druid/pull/917
@@ -451,6 +476,7 @@ Last release without a changelog :(
 [#1075]: https://github.com/linebender/druid/pull/1075
 [#1076]: https://github.com/linebender/druid/pull/1076
 [#1081]: https://github.com/linebender/druid/pull/1081
+[#1091]: https://github.com/linebender/druid/pull/1091
 [#1096]: https://github.com/linebender/druid/pull/1096
 [#1097]: https://github.com/linebender/druid/pull/1097
 [#1093]: https://github.com/linebender/druid/pull/1093
@@ -492,17 +518,34 @@ Last release without a changelog :(
 [#1238]: https://github.com/linebender/druid/pull/1238
 [#1241]: https://github.com/linebender/druid/pull/1241
 [#1245]: https://github.com/linebender/druid/pull/1245
+[#1248]: https://github.com/linebender/druid/pull/1248
 [#1251]: https://github.com/linebender/druid/pull/1251
 [#1252]: https://github.com/linebender/druid/pull/1252
 [#1255]: https://github.com/linebender/druid/pull/1255
+[#1272]: https://github.com/linebender/druid/pull/1272
 [#1276]: https://github.com/linebender/druid/pull/1276
 [#1278]: https://github.com/linebender/druid/pull/1278
 [#1280]: https://github.com/linebender/druid/pull/1280
+[#1283]: https://github.com/linebender/druid/pull/1283
 [#1295]: https://github.com/linebender/druid/pull/1280
 [#1298]: https://github.com/linebender/druid/pull/1298
 [#1299]: https://github.com/linebender/druid/pull/1299
+[#1302]: https://github.com/linebender/druid/pull/1302
+[#1306]: https://github.com/linebender/druid/pull/1306
 [#1311]: https://github.com/linebender/druid/pull/1311
 [#1320]: https://github.com/linebender/druid/pull/1320
+[#1324]: https://github.com/linebender/druid/pull/1324
+[#1326]: https://github.com/linebender/druid/pull/1326
+[#1328]: https://github.com/linebender/druid/pull/1328
+[#1346]: https://github.com/linebender/druid/pull/1346
+[#1351]: https://github.com/linebender/druid/pull/1351
+[#1259]: https://github.com/linebender/druid/pull/1259
+[#1361]: https://github.com/linebender/druid/pull/1361
+[#1371]: https://github.com/linebender/druid/pull/1371
+[#1410]: https://github.com/linebender/druid/pull/1410
+[#1433]: https://github.com/linebender/druid/pull/1433
+[#1438]: https://github.com/linebender/druid/pull/1438
+[#1441]: https://github.com/linebender/druid/pull/1441
 
 [Unreleased]: https://github.com/linebender/druid/compare/v0.6.0...master
 [0.6.0]: https://github.com/linebender/druid/compare/v0.5.0...v0.6.0

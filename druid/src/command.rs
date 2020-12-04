@@ -44,7 +44,7 @@ pub(crate) type SelectorSymbol = &'static str;
 /// [`get_unchecked`]: struct.Command.html#method.get_unchecked
 /// [`druid::commands`]: commands/index.html
 #[derive(Debug, PartialEq, Eq)]
-pub struct Selector<T = ()>(SelectorSymbol, PhantomData<*const T>);
+pub struct Selector<T = ()>(SelectorSymbol, PhantomData<T>);
 
 /// An arbitrary command.
 ///
@@ -79,6 +79,30 @@ pub struct Command {
     symbol: SelectorSymbol,
     payload: Arc<dyn Any>,
     target: Target,
+}
+
+/// A message passed up the tree from a [`Widget`] to its ancestors.
+///
+/// In the course of handling an event, a [`Widget`] may change some internal
+/// state that is of interest to one of its ancestors. In this case, the widget
+/// may submit a [`Notification`].
+///
+/// In practice, a [`Notification`] is very similar to a [`Command`]; the
+/// main distinction relates to delivery. [`Command`]s are delivered from the
+/// root of the tree down towards the target, and this delivery occurs after
+/// the originating event call has returned. [`Notification`]s are delivered *up*
+/// the tree, and this occurs *during* event handling; immediately after the
+/// child widget's [`event`] method returns, the notification will be delivered
+/// to the child's parent, and then the parent's parent, until the notification
+/// is handled.
+///
+/// [`Widget`]: crate::Widget
+/// [`event`]: crate::Widget::event
+#[derive(Clone)]
+pub struct Notification {
+    symbol: SelectorSymbol,
+    payload: Arc<dyn Any>,
+    source: WidgetId,
 }
 
 /// A wrapper type for [`Command`] payloads that should only be used once.
@@ -337,6 +361,19 @@ impl Command {
         .default_to(Target::Global)
     }
 
+    /// A helper method for creating a `Notification` from a `Command`.
+    ///
+    /// This is slightly icky; it lets us do `SOME_SELECTOR.with(SOME_PAYLOAD)`
+    /// (which generates a command) and then privately convert it to a
+    /// notification.
+    pub(crate) fn into_notification(self, source: WidgetId) -> Notification {
+        Notification {
+            symbol: self.symbol,
+            payload: self.payload,
+            source,
+        }
+    }
+
     /// Set the `Command`'s [`Target`].
     ///
     /// [`Command::target`] can be used to get the current [`Target`].
@@ -388,7 +425,7 @@ impl Command {
                 panic!(
                     "The selector \"{}\" exists twice with different types. See druid::Command::get for more information",
                     selector.symbol()
-                )
+                );
             }))
         } else {
             None
@@ -417,6 +454,43 @@ impl Command {
                 self.symbol
             )
         })
+    }
+}
+
+impl Notification {
+    /// Returns `true` if `self` matches this [`Selector`].
+    pub fn is<T>(&self, selector: Selector<T>) -> bool {
+        self.symbol == selector.symbol()
+    }
+
+    /// Returns the payload for this [`Selector`], if the selector matches.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the payload has a different type, than what the selector
+    /// is supposed to carry. This can happen when two selectors with different
+    /// types but the same key are used.
+    ///
+    /// [`is`]: #method.is
+    pub fn get<T: Any>(&self, selector: Selector<T>) -> Option<&T> {
+        if self.symbol == selector.symbol() {
+            Some(self.payload.downcast_ref().unwrap_or_else(|| {
+                panic!(
+                    "The selector \"{}\" exists twice with different types. \
+                    See druid::Command::get for more information",
+                    selector.symbol()
+                );
+            }))
+        } else {
+            None
+        }
+    }
+
+    /// The [`WidgetId`] of the [`Widget`] that sent this [`Notification`].
+    ///
+    /// [`Widget`]: crate::Widget
+    pub fn source(&self) -> WidgetId {
+        self.source
     }
 }
 
@@ -490,6 +564,16 @@ impl Into<Option<Target>> for WidgetId {
     }
 }
 
+impl std::fmt::Debug for Notification {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "Notification: Selector {} from {:?}",
+            self.symbol, self.source
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -500,5 +584,12 @@ mod tests {
         let payload = vec![0, 1, 2];
         let command = Command::new(sel, payload, Target::Auto);
         assert_eq!(command.get(sel), Some(&vec![0, 1, 2]));
+    }
+
+    #[test]
+    fn selector_is_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+
+        assert_send_sync::<Selector>();
     }
 }

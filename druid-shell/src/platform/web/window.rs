@@ -34,7 +34,7 @@ use super::error::Error;
 use super::keycodes::convert_keyboard_event;
 use super::menu::Menu;
 use crate::common_util::IdleCallback;
-use crate::dialog::{FileDialogOptions, FileDialogType, FileInfo};
+use crate::dialog::{FileDialogOptions, FileDialogType};
 use crate::error::Error as ShellError;
 use crate::scale::{Scale, ScaledArea};
 
@@ -100,7 +100,7 @@ struct WindowState {
 }
 
 // TODO: support custom cursors
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct CustomCursor;
 
 impl WindowState {
@@ -374,7 +374,7 @@ impl WindowBuilder {
     }
 
     pub fn build(self) -> Result<WindowHandle, Error> {
-        let window = web_sys::window().ok_or_else(|| Error::NoWindow)?;
+        let window = web_sys::window().ok_or(Error::NoWindow)?;
         let canvas = window
             .document()
             .ok_or(Error::NoDocument)?
@@ -564,25 +564,13 @@ impl WindowHandle {
         None
     }
 
-    pub fn open_file_sync(&mut self, options: FileDialogOptions) -> Option<FileInfo> {
-        log::warn!("open_file_sync is currently unimplemented for web.");
-        self.file_dialog(FileDialogType::Open, options)
-            .ok()
-            .map(|s| FileInfo { path: s.into() })
-    }
-
     pub fn open_file(&mut self, _options: FileDialogOptions) -> Option<FileDialogToken> {
+        log::warn!("open_file is currently unimplemented for web.");
         None
     }
 
-    pub fn save_as_sync(&mut self, options: FileDialogOptions) -> Option<FileInfo> {
-        log::warn!("save_as_sync is currently unimplemented for web.");
-        self.file_dialog(FileDialogType::Save, options)
-            .ok()
-            .map(|s| FileInfo { path: s.into() })
-    }
-
     pub fn save_as(&mut self, _options: FileDialogOptions) -> Option<FileDialogToken> {
+        log::warn!("save_as is currently unimplemented for web.");
         None
     }
 

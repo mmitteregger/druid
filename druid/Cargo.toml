@@ -25,6 +25,24 @@ gtk = ["druid-shell/gtk"]
 image = ["druid-shell/image"]
 svg = ["usvg", "harfbuzz-sys"]
 x11 = ["druid-shell/x11"]
+crochet = []
+
+# passing on all the image features. AVIF is not supported because it does not
+# support decoding, and that's all we use `Image` for.
+png = ["druid-shell/image_png"]
+jpeg = ["druid-shell/jpeg"]
+jpeg_rayon = ["druid-shell/jpeg_rayon"]
+gif = ["druid-shell/gif"]
+bmp = ["druid-shell/bmp"]
+ico = ["druid-shell/ico"]
+tiff = ["druid-shell/tiff"]
+webp = ["druid-shell/webp"]
+pnm = ["druid-shell/pnm"]
+dds = ["druid-shell/dds"]
+tga = ["druid-shell/tga"]
+farbfeld = ["druid-shell/farbfeld"]
+dxt = ["druid-shell/dxt"]
+hdr = ["druid-shell/hdr"]
 
 [dependencies]
 druid-shell = { version = "0.6.0", default-features = false, path = "../druid-shell" }
@@ -43,10 +61,10 @@ instant = { version = "0.1.6", features = ["wasm-bindgen"] }
 
 # Optional dependencies
 im = { version = "15.0.0", optional = true }
-usvg = { version = "0.11.0", optional = true }
+usvg = { version = "0.10.0", optional = true }
 # We don't depend directly on harfbuzz-sys, it comes through usvg. But we need to pin
 # the version, because the latest release of harfbuzz_rs is broken with harfbuzz-sys 0.5.
-harfbuzz-sys = { version = "0.5.0", optional = true }
+harfbuzz-sys = { version = "0.4.0", optional = true }
 
 [target.'cfg(target_arch="wasm32")'.dependencies]
 console_log = "0.2.0"
@@ -54,15 +72,15 @@ console_log = "0.2.0"
 [dev-dependencies]
 float-cmp = { version = "0.8.0", features = ["std"], default-features = false }
 tempfile = "3.1.0"
-piet-common = { version = "0.2.0-pre5", features = ["png"] }
+piet-common = { version = "=0.2.0-pre6", features = ["png"] }
 
 [[example]]
 name = "cursor"
-required-features = ["image"]
+required-features = ["image", "png"]
 
 [[example]]
 name = "image"
-required-features = ["image"]
+required-features = ["image", "png"]
 
 [[example]]
 name = "invalidation"
@@ -82,4 +100,4 @@ required-features = ["im"]
 
 [[example]]
 name = "widget_gallery"
-required-features = ["svg", "im", "image"]
+required-features = ["svg", "im", "image", "png"]

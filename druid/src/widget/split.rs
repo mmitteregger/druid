@@ -24,9 +24,9 @@ pub struct Split<T> {
     split_axis: Axis,
     split_point_chosen: f64,
     split_point_effective: f64,
-    min_size: f64,     // Integers only
-    bar_size: f64,     // Integers only
-    min_bar_area: f64, // Integers only
+    min_size: (f64, f64), // Integers only
+    bar_size: f64,        // Integers only
+    min_bar_area: f64,    // Integers only
     solid: bool,
     draggable: bool,
     child1: WidgetPod<T, Box<dyn Widget<T>>>,
@@ -47,7 +47,7 @@ impl<T> Split<T> {
             split_axis,
             split_point_chosen: 0.5,
             split_point_effective: 0.5,
-            min_size: 0.0,
+            min_size: (0.0, 0.0),
             bar_size: 6.0,
             min_bar_area: 6.0,
             solid: false,
@@ -86,9 +86,10 @@ impl<T> Split<T> {
     ///
     /// The value must be greater than or equal to `0.0`.
     /// The value will be rounded up to the nearest integer.
-    pub fn min_size(mut self, min_size: f64) -> Self {
-        assert!(min_size >= 0.0);
-        self.min_size = min_size.ceil();
+    pub fn min_size(mut self, first: f64, second: f64) -> Self {
+        assert!(first >= 0.0);
+        assert!(second >= 0.0);
+        self.min_size = (first.ceil(), second.ceil());
         self
     }
 
@@ -180,8 +181,8 @@ impl<T> Split<T> {
     fn split_side_limits(&self, size: Size) -> (f64, f64) {
         let split_axis_size = self.split_axis.major(size);
 
-        let mut min_limit = self.min_size;
-        let mut max_limit = (split_axis_size - min_limit).max(0.0);
+        let (mut min_limit, min_second) = self.min_size;
+        let mut max_limit = (split_axis_size - min_second).max(0.0);
 
         if min_limit > max_limit {
             min_limit = 0.5 * (min_limit + max_limit);
@@ -298,11 +299,15 @@ impl<T: Data> Widget<T> for Split<T> {
                         ctx.request_layout();
                     }
 
-                    if ctx.is_hot() && self.bar_hit_test(ctx.size(), mouse.pos) || ctx.is_active() {
-                        match self.split_axis {
-                            Axis::Horizontal => ctx.set_cursor(&Cursor::ResizeLeftRight),
-                            Axis::Vertical => ctx.set_cursor(&Cursor::ResizeUpDown),
-                        };
+                    if ctx.is_hot() || ctx.is_active() {
+                        if self.bar_hit_test(ctx.size(), mouse.pos) {
+                            match self.split_axis {
+                                Axis::Horizontal => ctx.set_cursor(&Cursor::ResizeLeftRight),
+                                Axis::Vertical => ctx.set_cursor(&Cursor::ResizeUpDown),
+                            };
+                        } else {
+                            ctx.clear_cursor();
+                        }
                     }
                 }
                 _ => {}
@@ -403,33 +408,22 @@ impl<T: Data> Widget<T> for Split<T> {
 
         // Top-left align for both children, out of laziness.
         // Reduce our unsplit direction to the larger of the two widgets
-        let (child1_rect, child2_rect) = match self.split_axis {
+        let child1_pos = Point::ORIGIN;
+        let child2_pos = match self.split_axis {
             Axis::Horizontal => {
                 my_size.height = child1_size.height.max(child2_size.height);
-                (
-                    Rect::from_origin_size(Point::ORIGIN, child1_size),
-                    Rect::from_origin_size(
-                        Point::new(child1_size.width + bar_area, 0.0),
-                        child2_size,
-                    ),
-                )
+                Point::new(child1_size.width + bar_area, 0.0)
             }
             Axis::Vertical => {
                 my_size.width = child1_size.width.max(child2_size.width);
-                (
-                    Rect::from_origin_size(Point::ORIGIN, child1_size),
-                    Rect::from_origin_size(
-                        Point::new(0.0, child1_size.height + bar_area),
-                        child2_size,
-                    ),
-                )
+                Point::new(0.0, child1_size.height + bar_area)
             }
         };
-        self.child1.set_layout_rect(ctx, data, env, child1_rect);
-        self.child2.set_layout_rect(ctx, data, env, child2_rect);
+        self.child1.set_origin(ctx, data, env, child1_pos);
+        self.child2.set_origin(ctx, data, env, child2_pos);
 
         let paint_rect = self.child1.paint_rect().union(self.child2.paint_rect());
-        let insets = paint_rect - Rect::ZERO.with_size(my_size);
+        let insets = paint_rect - my_size.to_rect();
         ctx.set_paint_insets(insets);
 
         my_size

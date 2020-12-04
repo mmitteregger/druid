@@ -14,13 +14,12 @@
 
 //! Management of multiple windows.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::mem;
 
 // Automatically defaults to std::time::Instant on non Wasm platforms
 use instant::Instant;
 
-use crate::kurbo::Rect;
 use crate::piet::{Piet, RenderContext};
 use crate::shell::{Counter, Cursor, Region, WindowHandle};
 
@@ -50,6 +49,7 @@ pub struct Window<T> {
     invalid: Region,
     pub(crate) menu: Option<MenuDesc<T>>,
     pub(crate) context_menu: Option<MenuDesc<T>>,
+    // This will be `Some` whenever the most recently displayed frame was an animation frame.
     pub(crate) last_anim: Option<Instant>,
     pub(crate) last_mouse_pos: Option<Point>,
     pub(crate) focus: Option<WidgetId>,
@@ -223,11 +223,6 @@ impl<T: Data> Window<T> {
             _ => (),
         }
 
-        let mut cursor = match event {
-            Event::MouseMove(..) => Some(Cursor::Arrow),
-            _ => None,
-        };
-
         let event = match event {
             Event::Timer(token) => {
                 if let Some(widget_id) = self.timers.get(&token) {
@@ -262,9 +257,10 @@ impl<T: Data> Window<T> {
         } else {
             let mut state =
                 ContextState::new::<T>(queue, &self.ext_handle, &self.handle, self.id, self.focus);
+            let mut notifications = VecDeque::new();
             let mut ctx = EventCtx {
-                cursor: &mut cursor,
                 state: &mut state,
+                notifications: &mut notifications,
                 widget_state: &mut widget_state,
                 is_handled: false,
                 is_root: true,
@@ -277,6 +273,12 @@ impl<T: Data> Window<T> {
                 }
             }
             self.root.event(&mut ctx, &event, data, env);
+            if !ctx.notifications.is_empty() {
+                log::info!("{} unhandled notifications:", ctx.notifications.len());
+                for (i, n) in ctx.notifications.iter().enumerate() {
+                    log::info!("{}: {:?}", i, n);
+                }
+            }
             Handled::from(ctx.is_handled)
         };
 
@@ -297,8 +299,10 @@ impl<T: Data> Window<T> {
             }
         }
 
-        if let Some(cursor) = cursor {
+        if let Some(cursor) = &widget_state.cursor {
             self.handle.set_cursor(&cursor);
+        } else if matches!(event, Event::MouseMove(..)) {
+            self.handle.set_cursor(&Cursor::Arrow);
         }
 
         self.post_event_processing(&mut widget_state, queue, data, env, false);
@@ -345,6 +349,10 @@ impl<T: Data> Window<T> {
             modal.widget.update(&mut update_ctx, data, env);
         }
         self.root.update(&mut update_ctx, data, env);
+        if let Some(cursor) = &widget_state.cursor {
+            self.handle.set_cursor(cursor);
+        }
+
         self.post_event_processing(&mut widget_state, queue, data, env, false);
     }
 
@@ -393,26 +401,10 @@ impl<T: Data> Window<T> {
         let last = self.last_anim.take();
         let elapsed_ns = last.map(|t| now.duration_since(t).as_nanos()).unwrap_or(0) as u64;
 
-        if self.needs_layout() {
-            self.layout(queue, data, env);
-        }
-
-        // Here, `self.wants_animation_frame()` refers to the animation frame that is currently
-        // being prepared for. (This is relying on the fact that `self.layout()` can't request
-        // an animation frame.)
         if self.wants_animation_frame() {
             self.event(queue, Event::AnimFrame(elapsed_ns), data, env);
-        }
-
-        // Here, `self.wants_animation_frame()` is true if we want *another* animation frame after
-        // the current one. (It got modified in the call to `self.event` above.)
-        if self.wants_animation_frame() {
             self.last_anim = Some(now);
         }
-    }
-
-    fn needs_layout(&self) -> bool {
-        self.root.state().needs_layout || self.modals.iter().any(|m| m.widget.state().needs_layout)
     }
 
     pub(crate) fn do_paint(
@@ -423,11 +415,19 @@ impl<T: Data> Window<T> {
         data: &T,
         env: &Env,
     ) {
+        if self.needs_layout() {
+            self.layout(queue, data, env);
+        }
+
         piet.fill(
             invalid.bounding_box(),
             &env.get(crate::theme::WINDOW_BACKGROUND_COLOR),
         );
         self.paint(piet, invalid, queue, data, env);
+    }
+
+    fn needs_layout(&self) -> bool {
+        self.root.state().needs_layout || self.modals.iter().any(|m| m.widget.state().needs_layout)
     }
 
     fn layout(&mut self, queue: &mut CommandQueue, data: &T, env: &Env) {
@@ -442,7 +442,7 @@ impl<T: Data> Window<T> {
         let bc = BoxConstraints::tight(self.size);
         let size = self.root.layout(&mut layout_ctx, &bc, data, env);
         self.root
-            .set_layout_rect(&mut layout_ctx, data, env, size.to_rect());
+            .set_origin(&mut layout_ctx, data, env, Point::ORIGIN);
 
         for modal in &mut self.modals {
             let bc = BoxConstraints::new(Size::ZERO, size);
@@ -453,11 +453,11 @@ impl<T: Data> Window<T> {
             } else {
                 ((size.to_vec2() - modal_size.to_vec2()) / 2.0).to_point()
             };
-            let modal_frame = Rect::from_origin_size(modal_origin, modal_size);
             modal
                 .widget
-                .set_layout_rect(&mut layout_ctx, data, env, modal_frame);
+                .set_origin(&mut layout_ctx, data, env, modal_origin);
         }
+
         self.post_event_processing(&mut widget_state, queue, data, env, true);
     }
 

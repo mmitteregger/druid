@@ -44,7 +44,7 @@ use crate::piet::ImageFormat;
 use crate::region::Region;
 use crate::scale::{Scalable, Scale, ScaledArea};
 use crate::window;
-use crate::window::{DeferredOp, FileDialogToken, IdleToken, TimerToken, WinHandler, WindowLevel};
+use crate::window::{FileDialogToken, IdleToken, TimerToken, WinHandler, WindowLevel};
 
 use super::application::Application;
 use super::dialog;
@@ -90,6 +90,16 @@ macro_rules! clone {
 #[derive(Clone, Default)]
 pub struct WindowHandle {
     pub(crate) state: Weak<WindowState>,
+    // Ensure that we don't implement Send, because it isn't actually safe to send the WindowState.
+    marker: std::marker::PhantomData<*const ()>,
+}
+
+/// Operations that we defer in order to avoid re-entrancy. See the documentation in the windows
+/// backend for more details.
+enum DeferredOp {
+    SaveAs(FileDialogOptions, FileDialogToken),
+    Open(FileDialogOptions, FileDialogToken),
+    ContextMenu(Menu, WindowHandle),
 }
 
 /// Builder abstraction for creating new windows
@@ -154,7 +164,7 @@ pub(crate) struct WindowState {
     deferred_queue: RefCell<Vec<DeferredOp>>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct CustomCursor(gdk::Cursor);
 
 impl WindowBuilder {
@@ -270,6 +280,7 @@ impl WindowBuilder {
 
         let mut handle = WindowHandle {
             state: Arc::downgrade(&win_state),
+            marker: std::marker::PhantomData,
         };
         if let Some(level) = self.level {
             handle.set_level(level);
@@ -296,7 +307,8 @@ impl WindowBuilder {
                 | EventMask::ENTER_NOTIFY_MASK
                 | EventMask::KEY_RELEASE_MASK
                 | EventMask::SCROLL_MASK
-                | EventMask::SMOOTH_SCROLL_MASK,
+                | EventMask::SMOOTH_SCROLL_MASK
+                | EventMask::FOCUS_CHANGE_MASK,
         );
 
         win_state.drawing_area.set_can_focus(true);
@@ -366,14 +378,13 @@ impl WindowBuilder {
                     // Note that we're borrowing the surface while calling the handler. This is ok,
                     // because we don't return control to the system or re-borrow the surface from
                     // any code that the client can call.
-                    // (TODO: the above comment isn't true yet because of save_as_sync and
-                    // open_sync, but it will be true soon)
                     state.with_handler_and_dont_check_the_other_borrows(|handler| {
                         let surface_context = cairo::Context::new(surface);
 
                         // Clip to the invalid region, in order that our surface doesn't get
                         // messed up if there's any painting outside them.
                         for rect in invalid.rects() {
+                            let rect = rect.to_px(scale);
                             surface_context.rectangle(rect.x0, rect.y0, rect.width(), rect.height());
                         }
                         surface_context.clip();
@@ -608,6 +619,24 @@ impl WindowBuilder {
             }));
 
         win_state
+            .drawing_area
+            .connect_focus_in_event(clone!(handle => move |_widget, _event| {
+                if let Some(state) = handle.state.upgrade() {
+                    state.with_handler(|h| h.got_focus());
+                }
+                Inhibit(true)
+            }));
+
+        win_state
+            .drawing_area
+            .connect_focus_out_event(clone!(handle => move |_widget, _event| {
+                if let Some(state) = handle.state.upgrade() {
+                    state.with_handler(|h| h.lost_focus());
+                }
+                Inhibit(true)
+            }));
+
+        win_state
             .window
             .connect_delete_event(clone!(handle => move |_widget, _ev| {
                 if let Some(state) = handle.state.upgrade() {
@@ -752,6 +781,15 @@ impl WindowState {
                     .ok()
                     .map(|s| FileInfo { path: s.into() });
                     self.with_handler(|h| h.save_as(token, file_info));
+                }
+                DeferredOp::ContextMenu(menu, handle) => {
+                    let accel_group = AccelGroup::new();
+                    self.window.add_accel_group(&accel_group);
+
+                    let menu = menu.into_gtk_menu(&handle, &accel_group);
+                    menu.set_property_attach_widget(Some(&self.window));
+                    menu.show_all();
+                    menu.popup_easy(3, gtk::get_current_event_time());
                 }
             }
         }
@@ -914,16 +952,15 @@ impl WindowHandle {
         };
 
         let token = TimerToken::next();
-        let handle = self.clone();
 
-        glib::timeout_add(interval, move || {
-            if let Some(state) = handle.state.upgrade() {
+        if let Some(state) = self.state.upgrade() {
+            glib::timeout_add(interval, move || {
                 if state.with_handler(|h| h.timer(token)).is_some() {
                     return glib::Continue(false);
                 }
-            }
-            glib::Continue(true)
-        });
+                glib::Continue(true)
+            });
+        }
         token
     }
 
@@ -986,16 +1023,6 @@ impl WindowHandle {
         }
     }
 
-    pub fn save_as_sync(&mut self, _options: FileDialogOptions) -> Option<FileInfo> {
-        log::error!("save as sync no longer supported on GTK");
-        None
-    }
-
-    pub fn open_file_sync(&mut self, _options: FileDialogOptions) -> Option<FileInfo> {
-        log::error!("open file sync no longer supported on GTK");
-        None
-    }
-
     /// Get a handle that can be used to schedule an idle task.
     pub fn get_idle_handle(&self) -> Option<IdleHandle> {
         self.state.upgrade().map(|s| IdleHandle {
@@ -1038,15 +1065,7 @@ impl WindowHandle {
 
     pub fn show_context_menu(&self, menu: Menu, _pos: Point) {
         if let Some(state) = self.state.upgrade() {
-            let window = &state.window;
-
-            let accel_group = AccelGroup::new();
-            window.add_accel_group(&accel_group);
-
-            let menu = menu.into_gtk_menu(&self, &accel_group);
-            menu.set_property_attach_widget(Some(window));
-            menu.show_all();
-            menu.popup_easy(3, gtk::get_current_event_time());
+            state.defer(DeferredOp::ContextMenu(menu, self.clone()));
         }
     }
 
@@ -1057,8 +1076,10 @@ impl WindowHandle {
     }
 }
 
-unsafe impl Send for IdleHandle {}
-// WindowState needs to be Send + Sync so it can be passed into glib closures
+// WindowState needs to be Send + Sync so it can be passed into glib closures.
+// TODO: can we localize the unsafety more? Glib's idle loop always runs on the main thread,
+// and we always construct the WindowState on the main thread, so it should be ok (and also
+// WindowState isn't a public type).
 unsafe impl Send for WindowState {}
 unsafe impl Sync for WindowState {}
 

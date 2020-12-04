@@ -262,7 +262,12 @@ impl Axis {
     }
 
     /// Generate constraints with new values on the major axis.
-    fn constraints(self, bc: &BoxConstraints, min_major: f64, major: f64) -> BoxConstraints {
+    pub(crate) fn constraints(
+        self,
+        bc: &BoxConstraints,
+        min_major: f64,
+        major: f64,
+    ) -> BoxConstraints {
         match self {
             Axis::Horizontal => BoxConstraints::new(
                 Size::new(min_major, bc.min().height),
@@ -619,10 +624,13 @@ impl<T: Data> Widget<T> for Flex<T> {
         // these two are calculated but only used if we're baseline aligned
         let mut max_above_baseline = 0f64;
         let mut max_below_baseline = 0f64;
+        let mut any_use_baseline = self.cross_alignment == CrossAxisAlignment::Baseline;
 
         // Measure non-flex children.
         let mut major_non_flex = 0.0;
         for child in &mut self.children {
+            any_use_baseline &= child.params.alignment == Some(CrossAxisAlignment::Baseline);
+
             if child.params.flex == 0.0 {
                 let child_bc = self
                     .direction
@@ -642,9 +650,6 @@ impl<T: Data> Widget<T> for Flex<T> {
                 minor = minor.max(self.direction.minor(child_size).expand());
                 max_above_baseline = max_above_baseline.max(child_size.height - baseline_offset);
                 max_below_baseline = max_below_baseline.max(baseline_offset);
-                // Stash size.
-                let rect = child_size.to_rect();
-                child.widget.set_layout_rect(ctx, data, env, rect);
             }
         }
 
@@ -672,9 +677,6 @@ impl<T: Data> Widget<T> for Flex<T> {
                 minor = minor.max(self.direction.minor(child_size).expand());
                 max_above_baseline = max_above_baseline.max(child_size.height - baseline_offset);
                 max_below_baseline = max_below_baseline.max(baseline_offset);
-                // Stash size.
-                let rect = child_size.to_rect();
-                child.widget.set_layout_rect(ctx, data, env, rect);
             }
         }
 
@@ -692,8 +694,8 @@ impl<T: Data> Widget<T> for Flex<T> {
         // the actual size needed to tightly fit the children on the minor axis.
         // Unlike the 'minor' var, this ignores the incoming constraints.
         let minor_dim = match self.direction {
-            Axis::Horizontal => max_below_baseline + max_above_baseline,
-            Axis::Vertical => minor,
+            Axis::Horizontal if any_use_baseline => max_below_baseline + max_above_baseline,
+            _ => minor,
         };
 
         let mut major = spacing.next().unwrap_or(0.);
@@ -717,8 +719,7 @@ impl<T: Data> Widget<T> for Flex<T> {
             };
 
             let child_pos: Point = self.direction.pack(major, child_minor_offset).into();
-            let child_frame = Rect::from_origin_size(child_pos, child_size);
-            child.widget.set_layout_rect(ctx, data, env, child_frame);
+            child.widget.set_origin(ctx, data, env, child_pos);
             child_paint_rect = child_paint_rect.union(child.widget.paint_rect());
             major += self.direction.major(child_size).expand();
             major += spacing.next().unwrap_or(0.);

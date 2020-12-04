@@ -137,6 +137,11 @@ impl<T: TextStorage + EditableText> Editor<T> {
         self.do_edit(EditAction::Paste(t), data)
     }
 
+    /// Set the selection to the entire buffer.
+    pub fn select_all(&mut self, data: &T) {
+        self.selection = Selection::new(0, data.len());
+    }
+
     fn mouse_action_for_event(&self, event: &MouseEvent) -> MouseAction {
         let pos = self.layout.text_position_for_point(event.pos);
         MouseAction {
@@ -156,9 +161,9 @@ impl<T: TextStorage + EditableText> Editor<T> {
         if self.data_is_stale(new_data) {
             self.layout.set_text(new_data.clone());
             self.selection = self.selection.constrained(new_data);
-            ctx.request_paint();
+            ctx.request_layout();
         } else if self.layout.needs_rebuild_after_update(ctx) {
-            ctx.request_paint();
+            ctx.request_layout();
         }
         self.rebuild_if_needed(ctx.text(), env);
     }
@@ -217,7 +222,10 @@ impl<T: TextStorage + EditableText> Editor<T> {
     /// the data before us while handling an event; if this is the case we ignore
     /// the event, and our data will be updated in `update`.
     fn data_is_stale(&self, data: &T) -> bool {
-        self.layout.text().map(|t| !t.same(data)).unwrap_or(true)
+        self.layout
+            .text()
+            .map(|t| t.as_str() != data.as_str())
+            .unwrap_or(true)
     }
 
     fn insert(&mut self, data: &mut T, text: &str) {

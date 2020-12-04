@@ -16,19 +16,20 @@
 
 use std::{
     any::{Any, TypeId},
+    collections::VecDeque,
     ops::{Deref, DerefMut},
     time::Duration,
 };
 
-use crate::core::{CommandQueue, FocusChange, WidgetState};
+use crate::core::{CommandQueue, CursorChange, FocusChange, WidgetState};
 use crate::env::KeyLike;
 use crate::modal::ModalDesc;
 use crate::piet::{Piet, PietText, RenderContext};
 use crate::shell::Region;
 use crate::{
     commands, Affine, Command, ContextMenu, Cursor, Data, DialogDesc, Env, ExtEventSink, Insets,
-    MenuDesc, Point, Rect, SingleUse, Size, Target, TimerToken, WidgetId, WindowDesc, WindowHandle,
-    WindowId,
+    MenuDesc, Notification, Point, Rect, SingleUse, Size, Target, TimerToken, WidgetId, WindowDesc,
+    WindowHandle, WindowId,
 };
 
 /// A macro for implementing methods on multiple contexts.
@@ -66,7 +67,7 @@ pub(crate) struct ContextState<'a> {
 pub struct EventCtx<'a, 'b> {
     pub(crate) state: &'a mut ContextState<'b>,
     pub(crate) widget_state: &'a mut WidgetState,
-    pub(crate) cursor: &'a mut Option<Cursor>,
+    pub(crate) notifications: &'a mut VecDeque<Notification>,
     pub(crate) is_handled: bool,
     pub(crate) is_root: bool,
 }
@@ -253,6 +254,47 @@ impl_context_method!(
     }
 );
 
+impl_context_method!(EventCtx<'_, '_>, UpdateCtx<'_, '_>, {
+    /// Set the cursor icon.
+    ///
+    /// This setting will be retained until [`clear_cursor`] is called, but it will only take
+    /// effect when this widget is either [`hot`] or [`active`]. If a child widget also sets a
+    /// cursor, the child widget's cursor will take precedence. (If that isn't what you want, use
+    /// [`override_cursor`] instead.)
+    ///
+    /// [`clear_cursor`]: EventCtx::clear_cursor
+    /// [`override_cursor`]: EventCtx::override_cursor
+    /// [`hot`]: EventCtx::is_hot
+    /// [`active`]: EventCtx::is_active
+    pub fn set_cursor(&mut self, cursor: &Cursor) {
+        self.widget_state.cursor_change = CursorChange::Set(cursor.clone());
+    }
+
+    /// Override the cursor icon.
+    ///
+    /// This setting will be retained until [`clear_cursor`] is called, but it will only take
+    /// effect when this widget is either [`hot`] or [`active`]. This will override the cursor
+    /// preferences of a child widget. (If that isn't what you want, use [`set_cursor`] instead.)
+    ///
+    /// [`clear_cursor`]: EventCtx::clear_cursor
+    /// [`set_cursor`]: EventCtx::override_cursor
+    /// [`hot`]: EventCtx::is_hot
+    /// [`active`]: EventCtx::is_active
+    pub fn override_cursor(&mut self, cursor: &Cursor) {
+        self.widget_state.cursor_change = CursorChange::Override(cursor.clone());
+    }
+
+    /// Clear the cursor icon.
+    ///
+    /// This undoes the effect of [`set_cursor`] and [`override_cursor`].
+    ///
+    /// [`override_cursor`]: EventCtx::override_cursor
+    /// [`set_cursor`]: EventCtx::set_cursor
+    pub fn clear_cursor(&mut self) {
+        self.widget_state.cursor_change = CursorChange::Default;
+    }
+});
+
 // methods on event, update, and lifecycle
 impl_context_method!(EventCtx<'_, '_>, UpdateCtx<'_, '_>, LifeCycleCtx<'_, '_>, {
     /// Request a [`paint`] pass. This is equivalent to calling
@@ -352,21 +394,32 @@ impl_context_method!(
 );
 
 impl EventCtx<'_, '_> {
-    /// Set the cursor icon.
+    /// Submit a [`Notification`].
     ///
-    /// Call this when handling a mouse move event, to set the cursor for the
-    /// widget. A container widget can safely call this method, then recurse
-    /// to its children, as a sequence of calls within an event propagation
-    /// only has the effect of the last one (ie no need to worry about
-    /// flashing).
+    /// The provided argument can be a [`Selector`] or a [`Command`]; this lets
+    /// us work with the existing API for addding a payload to a [`Selector`].
     ///
-    /// This method is expected to be called mostly from the [`MouseMove`]
-    /// event handler, but can also be called in response to other events,
-    /// for example pressing a key to change the behavior of a widget.
+    /// If the argument is a `Command`, the command's target will be ignored.
     ///
-    /// [`MouseMove`]: enum.Event.html#variant.MouseMove
-    pub fn set_cursor(&mut self, cursor: &Cursor) {
-        *self.cursor = Some(cursor.clone());
+    /// # Examples
+    ///
+    /// ```
+    /// # use druid::{Event, EventCtx, Selector};
+    /// const IMPORTANT_EVENT: Selector<String> = Selector::new("druid-example.important-event");
+    ///
+    /// fn check_event(ctx: &mut EventCtx, event: &Event) {
+    ///     if is_this_the_event_we_were_looking_for(event) {
+    ///         ctx.submit_notification(IMPORTANT_EVENT.with("That's the one".to_string()))
+    ///     }
+    /// }
+    ///
+    /// # fn is_this_the_event_we_were_looking_for(event: &Event) -> bool { true }
+    /// ```
+    ///
+    /// [`Selector`]: crate::Selector
+    pub fn submit_notification(&mut self, note: impl Into<Command>) {
+        let note = note.into().into_notification(self.widget_state.id);
+        self.notifications.push_back(note);
     }
 
     /// Set the "active" state of the widget.
@@ -389,12 +442,7 @@ impl EventCtx<'_, '_> {
                     .to(Target::Global),
             );
         } else {
-            const MSG: &str = "WindowDesc<T> - T must match the application data type.";
-            if cfg!(debug_assertions) {
-                panic!(MSG);
-            } else {
-                log::error!("EventCtx::new_window: {}", MSG)
-            }
+            debug_panic!("EventCtx::new_window<T> - T must match the application data type.");
         }
     }
 
@@ -410,12 +458,9 @@ impl EventCtx<'_, '_> {
                     .to(Target::Window(self.state.window_id)),
             );
         } else {
-            const MSG: &str = "ContextMenu<T> - T must match the application data type.";
-            if cfg!(debug_assertions) {
-                panic!(MSG);
-            } else {
-                log::error!("EventCtx::show_context_menu: {}", MSG)
-            }
+            debug_panic!(
+                "EventCtx::show_context_menu<T> - T must match the application data type."
+            );
         }
     }
 
@@ -790,12 +835,7 @@ impl<'a> ContextState<'a> {
                     .to(Target::Window(self.window_id)),
             );
         } else {
-            const MSG: &str = "MenuDesc<T> - T must match the application data type.";
-            if cfg!(debug_assertions) {
-                panic!(MSG);
-            } else {
-                log::error!("EventCtx::set_menu: {}", MSG)
-            }
+            debug_panic!("EventCtx::set_menu<T> - T must match the application data type.");
         }
     }
 
